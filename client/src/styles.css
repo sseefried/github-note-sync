@@ -16,6 +16,11 @@ body {
   min-height: 100vh;
 }
 
+body.is-resizing-sidebar {
+  cursor: col-resize;
+  user-select: none;
+}
+
 button,
 textarea,
 input,
@@ -39,8 +44,8 @@ select {
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) 12px var(--sidebar-width, 360px);
+  gap: 0;
   min-height: calc(100vh - 48px);
 }
 
@@ -65,6 +70,39 @@ select {
   color: #eef2f7;
   display: flex;
   flex-direction: column;
+}
+
+.pane-resizer {
+  position: relative;
+  cursor: col-resize;
+}
+
+.pane-resizer::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: transparent;
+}
+
+.pane-resizer::after {
+  content: "";
+  position: absolute;
+  top: 22px;
+  bottom: 22px;
+  left: 50%;
+  width: 4px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(179, 96, 36, 0.08), rgba(179, 96, 36, 0.28), rgba(179, 96, 36, 0.08));
+}
+
+.pane-resizer:hover::after,
+.pane-resizer:focus-visible::after {
+  background: linear-gradient(180deg, rgba(179, 96, 36, 0.16), rgba(179, 96, 36, 0.48), rgba(179, 96, 36, 0.16));
+}
+
+.pane-resizer:focus-visible {
+  outline: none;
 }
 
 .pane-header {
@@ -245,6 +283,12 @@ select {
   flex-direction: column;
 }
 
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .tree-children {
   margin-left: 14px;
   border-left: 1px solid rgba(255, 255, 255, 0.08);
@@ -253,6 +297,7 @@ select {
 
 .tree-directory,
 .tree-file {
+  flex: 1;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -274,6 +319,40 @@ select {
   width: 12px;
   color: rgba(245, 194, 126, 0.8);
   font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+}
+
+.tree-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tree-action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(238, 242, 247, 0.78);
+}
+
+.tree-action-button:hover {
+  background: rgba(245, 194, 126, 0.18);
+  color: #fff7ed;
+}
+
+.tree-action-button-danger:hover {
+  background: rgba(165, 56, 47, 0.22);
+  color: #fff4f1;
+}
+
+.tree-action-icon {
+  width: 14px;
+  height: 14px;
 }
 
 .sync-badge,
@@ -509,11 +588,16 @@ code {
 
   .workspace {
     grid-template-columns: 1fr;
+    gap: 18px;
   }
 
   .tree-pane {
     order: -1;
     min-height: 320px;
+  }
+
+  .pane-resizer {
+    display: none;
   }
 
   .status-row,

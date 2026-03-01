@@ -2,6 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 const SERVER_URL = (import.meta.env.VITE_SERVER_URL ?? '').trim().replace(/\/$/, '');
 const CLIENT_WRITE_DEBOUNCE_MS = 3_000;
+const PATH_SEPARATOR_PATTERN = /[\\/]/;
+const DEFAULT_SIDEBAR_WIDTH = 360;
+const MIN_SIDEBAR_WIDTH = 280;
+const MAX_SIDEBAR_WIDTH = 720;
+const MIN_EDITOR_WIDTH = 320;
+const SIDEBAR_WIDTH_STORAGE_KEY = 'github-note-sync.sidebar-width';
 
 async function fetchJson(url, options) {
   const response = await fetch(`${SERVER_URL}${url}`, {
@@ -52,13 +58,122 @@ function hasFilePath(node, targetPath) {
   return (node.children ?? []).some((child) => hasFilePath(child, targetPath));
 }
 
+function hasFileDescendant(node) {
+  if (!node) {
+    return false;
+  }
+
+  if (node.type === 'file') {
+    return true;
+  }
+
+  return (node.children ?? []).some((child) => hasFileDescendant(child));
+}
+
 function SyncBadge({ status }) {
   const label = status?.lastSyncStatus ?? 'starting';
 
   return <span className={`sync-badge sync-badge-${label}`}>{label}</span>;
 }
 
-function TreeNode({ node, selectedPath, onSelect }) {
+function clampSidebarWidth(width, containerWidth = Number.POSITIVE_INFINITY) {
+  const maxWidthFromContainer = Number.isFinite(containerWidth)
+    ? Math.max(MIN_SIDEBAR_WIDTH, containerWidth - MIN_EDITOR_WIDTH)
+    : MAX_SIDEBAR_WIDTH;
+
+  return Math.max(MIN_SIDEBAR_WIDTH, Math.min(width, MAX_SIDEBAR_WIDTH, maxWidthFromContainer));
+}
+
+function getRepoAliasFromLocation() {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+
+  const [firstSegment = ''] = window.location.pathname.split('/').filter(Boolean);
+
+  try {
+    return decodeURIComponent(firstSegment ?? '').trim();
+  } catch {
+    return '';
+  }
+}
+
+function FilePlusIcon() {
+  return (
+    <svg aria-hidden="true" className="tree-action-icon" viewBox="0 0 16 16">
+      <path
+        d="M4.5 1.75h4.5l3 3V13a1.25 1.25 0 0 1-1.25 1.25h-6.5A1.25 1.25 0 0 1 3 13V3A1.25 1.25 0 0 1 4.25 1.75Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.25"
+      />
+      <path d="M9 1.75V5h3.25" fill="none" stroke="currentColor" strokeWidth="1.25" />
+      <path d="M8 7.1v4.2M5.9 9.2h4.2" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.25" />
+    </svg>
+  );
+}
+
+function FolderPlusIcon() {
+  return (
+    <svg aria-hidden="true" className="tree-action-icon" viewBox="0 0 16 16">
+      <path
+        d="M1.75 4.5A1.25 1.25 0 0 1 3 3.25h3l1.1 1.4h5.9a1.25 1.25 0 0 1 1.25 1.25v5.1A1.25 1.25 0 0 1 13 12.25H3A1.25 1.25 0 0 1 1.75 11Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.25"
+      />
+      <path d="M8 6.8v3.6M6.2 8.6h3.6" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.25" />
+    </svg>
+  );
+}
+
+function RefreshIcon() {
+  return (
+    <svg aria-hidden="true" className="tree-action-icon" viewBox="0 0 16 16">
+      <path
+        d="M12.8 6.3A5.25 5.25 0 1 0 13 8"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.25"
+      />
+      <path
+        d="M10.6 3.2h2.7v2.7"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.25"
+      />
+    </svg>
+  );
+}
+
+function DeleteIcon() {
+  return (
+    <svg aria-hidden="true" className="tree-action-icon" viewBox="0 0 16 16">
+      <path
+        d="M3.25 4.5h9.5M6 4.5v-1a.75.75 0 0 1 .75-.75h2.5A.75.75 0 0 1 10 3.5v1M5.1 6.2v5.1M8 6.2v5.1M10.9 6.2v5.1M4.4 4.5l.45 7.05c.03.48.43.85.91.85h4.5c.48 0 .88-.37.91-.85l.45-7.05"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.25"
+      />
+    </svg>
+  );
+}
+
+function TreeNode({
+  depth = 0,
+  node,
+  onCreateFile,
+  onCreateFolder,
+  onDeleteFolder,
+  onRefresh,
+  onSelect,
+  selectedPath,
+}) {
   const [expanded, setExpanded] = useState(true);
 
   if (node.type === 'file') {
@@ -74,22 +189,91 @@ function TreeNode({ node, selectedPath, onSelect }) {
     );
   }
 
+  const showNewFileAction = typeof onCreateFile === 'function';
+  const showNewFolderAction = typeof onCreateFolder === 'function';
+  const showRefreshAction = depth === 0 && typeof onRefresh === 'function';
+  const showDeleteFolderAction =
+    depth > 0 && typeof onDeleteFolder === 'function' && !hasFileDescendant(node);
+
   return (
     <div className="tree-group">
-      <button
-        className="tree-directory"
-        onClick={() => setExpanded((current) => !current)}
-        type="button"
-      >
-        <span className="tree-prefix">{expanded ? '-' : '+'}</span>
-        <span>{node.name}</span>
-      </button>
+      <div className="tree-row">
+        <button
+          className="tree-directory"
+          onClick={() => setExpanded((current) => !current)}
+          type="button"
+        >
+          <span className="tree-prefix">{expanded ? '-' : '+'}</span>
+          <span>{node.name}</span>
+        </button>
+        {showNewFileAction || showNewFolderAction ? (
+          <div className="tree-actions">
+            {showRefreshAction ? (
+              <button
+                className="tree-action-button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onRefresh();
+                }}
+                title="Refresh tree from disk"
+                type="button"
+              >
+                <RefreshIcon />
+              </button>
+            ) : null}
+            {showNewFileAction ? (
+              <button
+                className="tree-action-button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onCreateFile(node.path);
+                }}
+                title={depth === 0 ? 'New file in repo root' : `New file in ${node.name}`}
+                type="button"
+              >
+                <FilePlusIcon />
+              </button>
+            ) : null}
+            {showNewFolderAction ? (
+              <button
+                className="tree-action-button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onCreateFolder(node.path);
+                }}
+                title={depth === 0 ? 'New folder in repo root' : `New folder in ${node.name}`}
+                type="button"
+              >
+                <FolderPlusIcon />
+              </button>
+            ) : null}
+            {showDeleteFolderAction ? (
+              <button
+                className="tree-action-button tree-action-button-danger"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onDeleteFolder(node.path, node.name);
+                }}
+                title={`Delete empty folder ${node.name}`}
+                type="button"
+              >
+                <DeleteIcon />
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
       {expanded ? (
         <div className="tree-children">
           {(node.children ?? []).map((child) => (
             <TreeNode
+              depth={depth + 1}
               key={child.path || child.name}
               node={child}
+              onCreateFile={onCreateFile}
+              onCreateFolder={onCreateFolder}
+              onDeleteFolder={onDeleteFolder}
+              onRefresh={onRefresh}
               selectedPath={selectedPath}
               onSelect={onSelect}
             />
@@ -102,11 +286,13 @@ function TreeNode({ node, selectedPath, onSelect }) {
 
 export default function App() {
   const [activeSidebarTab, setActiveSidebarTab] = useState('select');
+  const [routeRepoAlias, setRouteRepoAlias] = useState(() => getRepoAliasFromLocation());
   const [tree, setTree] = useState(null);
   const [status, setStatus] = useState(null);
   const [selectedPath, setSelectedPath] = useState(null);
   const [content, setContent] = useState('');
   const [loadingFile, setLoadingFile] = useState(false);
+  const [loadingTree, setLoadingTree] = useState(false);
   const [appError, setAppError] = useState('');
   const [repoError, setRepoError] = useState('');
   const [saveError, setSaveError] = useState('');
@@ -121,7 +307,22 @@ export default function App() {
   const [savingAlias, setSavingAlias] = useState(false);
   const [deletingAlias, setDeletingAlias] = useState(false);
   const [registeringRepo, setRegisteringRepo] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    if (typeof window === 'undefined') {
+      return DEFAULT_SIDEBAR_WIDTH;
+    }
 
+    const storedWidth = Number.parseInt(
+      window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY) ?? '',
+      10,
+    );
+
+    return Number.isFinite(storedWidth)
+      ? clampSidebarWidth(storedWidth, window.innerWidth)
+      : DEFAULT_SIDEBAR_WIDTH;
+  });
+
+  const workspaceRef = useRef(null);
   const statusRef = useRef(null);
   const selectedPathRef = useRef(null);
   const activeRepoAliasRef = useRef('');
@@ -129,6 +330,7 @@ export default function App() {
   const flushTimerRef = useRef(null);
   const pendingWriteRef = useRef(null);
   const writeSequenceRef = useRef(0);
+  const resizeCleanupRef = useRef(null);
 
   const missingServerUrl = SERVER_URL === '';
 
@@ -143,6 +345,33 @@ export default function App() {
   useEffect(() => {
     activeRepoAliasRef.current = activeRepoAlias;
   }, [activeRepoAlias]);
+
+  useEffect(() => {
+    function handlePopState() {
+      setRouteRepoAlias(getRepoAliasFromLocation());
+    }
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth));
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    function handleWindowResize() {
+      const workspaceWidth = workspaceRef.current?.getBoundingClientRect().width ?? window.innerWidth;
+      setSidebarWidth((currentWidth) => clampSidebarWidth(currentWidth, workspaceWidth));
+    }
+
+    window.addEventListener('resize', handleWindowResize);
+    return () => window.removeEventListener('resize', handleWindowResize);
+  }, []);
 
   async function flushPendingWrite({ keepalive = false } = {}) {
     if (flushTimerRef.current) {
@@ -191,21 +420,58 @@ export default function App() {
 
   flushPendingWriteRef.current = flushPendingWrite;
 
+  function navigateToRepoAlias(repoAlias, { replace = false } = {}) {
+    if (typeof window === 'undefined') {
+      setRouteRepoAlias(repoAlias);
+      return;
+    }
+
+    const normalizedAlias = typeof repoAlias === 'string' ? repoAlias.trim() : '';
+    const nextPath = normalizedAlias ? `/${encodeURIComponent(normalizedAlias)}` : '/';
+    const historyMethod = replace ? 'replaceState' : 'pushState';
+
+    if (window.location.pathname !== nextPath) {
+      window.history[historyMethod](null, '', nextPath);
+    }
+
+    setRouteRepoAlias(normalizedAlias);
+  }
+
+  function promptForSimpleName(label, placeholder) {
+    const value = window.prompt(label, placeholder);
+
+    if (value === null) {
+      return null;
+    }
+
+    const normalizedValue = value.trim();
+
+    if (normalizedValue === '') {
+      throw new Error('A name is required.');
+    }
+
+    if (normalizedValue === '.' || normalizedValue === '..' || PATH_SEPARATOR_PATTERN.test(normalizedValue)) {
+      throw new Error('Only a simple name is allowed. Do not include path separators.');
+    }
+
+    return normalizedValue;
+  }
+
   async function loadRepoAliases() {
     const data = await fetchJson('/api/repos');
     const aliases = data.repoAliases ?? [];
 
     setRepoAliases(aliases);
-    setActiveRepoAlias((currentAlias) => {
-      if (currentAlias && aliases.includes(currentAlias)) {
-        return currentAlias;
-      }
-
-      return aliases[0] ?? '';
-    });
 
     return aliases;
   }
+
+  useEffect(() => {
+    const nextActiveRepoAlias =
+      routeRepoAlias && repoAliases.includes(routeRepoAlias) ? routeRepoAlias : '';
+
+    setActiveRepoAlias(nextActiveRepoAlias);
+  }, [repoAliases, routeRepoAlias]);
 
   async function loadPublicKey(repoAlias) {
     if (!repoAlias) {
@@ -266,6 +532,7 @@ export default function App() {
       setStatus(null);
       setSelectedPath(null);
       setContent('');
+      setLoadingTree(false);
       return;
     }
 
@@ -278,6 +545,7 @@ export default function App() {
         setStatus(null);
         setSelectedPath(null);
         setContent('');
+        setLoadingTree(false);
         return;
       }
 
@@ -307,6 +575,63 @@ export default function App() {
       }
     } catch (error) {
       setRepoError(error.message);
+    } finally {
+      setLoadingTree(false);
+    }
+  }
+
+  async function refreshTreeState({
+    forceReloadFile = false,
+    repoAlias = activeRepoAliasRef.current,
+  } = {}) {
+    if (!repoAlias) {
+      setTree(null);
+      setStatus(null);
+      setSelectedPath(null);
+      setContent('');
+      setLoadingTree(false);
+      return;
+    }
+
+    setLoadingTree(true);
+
+    if (flushTimerRef.current) {
+      window.clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+
+    pendingWriteRef.current = null;
+
+    try {
+      const data = await fetchJson('/api/refresh', {
+        method: 'POST',
+        body: JSON.stringify({
+          repoAlias,
+        }),
+      });
+
+      setRepoError('');
+      setStatus(data.status);
+      setTree(data.tree);
+
+      const activePath =
+        selectedPathRef.current && hasFilePath(data.tree, selectedPathRef.current)
+          ? selectedPathRef.current
+          : findFirstFile(data.tree);
+
+      if (!activePath) {
+        setSelectedPath(null);
+        setContent('');
+        return;
+      }
+
+      if (forceReloadFile || activePath !== selectedPathRef.current) {
+        await loadFile(activePath, repoAlias);
+      }
+    } catch (error) {
+      setRepoError(error.message);
+    } finally {
+      setLoadingTree(false);
     }
   }
 
@@ -329,10 +654,11 @@ export default function App() {
       setStatus(null);
       setSelectedPath(null);
       setContent('');
+      setLoadingTree(false);
       return undefined;
     }
 
-    loadState({ forceReloadFile: true, repoAlias: activeRepoAlias });
+    refreshTreeState({ forceReloadFile: true, repoAlias: activeRepoAlias });
 
     const interval = window.setInterval(() => {
       loadState({ repoAlias: activeRepoAliasRef.current });
@@ -377,11 +703,62 @@ export default function App() {
         window.clearTimeout(flushTimerRef.current);
       }
 
+      resizeCleanupRef.current?.();
+
       window.removeEventListener('beforeunload', flushForLifecycle);
       window.removeEventListener('pagehide', flushForLifecycle);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, []);
+
+  function applySidebarWidthFromPointer(clientX) {
+    const workspaceRect = workspaceRef.current?.getBoundingClientRect();
+
+    if (!workspaceRect) {
+      return;
+    }
+
+    const nextWidth = clampSidebarWidth(workspaceRect.right - clientX, workspaceRect.width);
+    setSidebarWidth(nextWidth);
+  }
+
+  function handleResizeStart(event) {
+    if (window.matchMedia('(max-width: 900px)').matches) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const handlePointerMove = (moveEvent) => {
+      applySidebarWidthFromPointer(moveEvent.clientX);
+    };
+
+    const handlePointerUp = () => {
+      document.body.classList.remove('is-resizing-sidebar');
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      resizeCleanupRef.current = null;
+    };
+
+    resizeCleanupRef.current = handlePointerUp;
+    document.body.classList.add('is-resizing-sidebar');
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+  }
+
+  function handleResizeKeyDown(event) {
+    const workspaceWidth = workspaceRef.current?.getBoundingClientRect().width ?? window.innerWidth;
+
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      setSidebarWidth((currentWidth) => clampSidebarWidth(currentWidth + 24, workspaceWidth));
+    }
+
+    if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      setSidebarWidth((currentWidth) => clampSidebarWidth(currentWidth - 24, workspaceWidth));
+    }
+  }
 
   async function handleFileSelect(path) {
     await flushPendingWrite();
@@ -395,7 +772,7 @@ export default function App() {
       await flushPendingWrite();
     } catch {}
 
-    setActiveRepoAlias(nextRepoAlias);
+    navigateToRepoAlias(nextRepoAlias);
     setEditingAlias(nextRepoAlias);
     setCopyStatus('');
   }
@@ -433,7 +810,7 @@ export default function App() {
       setRepoAliasDraft('');
       setRepoDraft('');
       await loadRepoAliases();
-      setActiveRepoAlias(data.repoAlias);
+      navigateToRepoAlias(data.repoAlias);
       setEditingAlias(data.repoAlias);
       setEditingRepoDraft(data.repo);
       setPublicKey('');
@@ -445,34 +822,97 @@ export default function App() {
     }
   }
 
-  async function handleNewFile() {
+  async function handleNewFile(parentPath = '') {
     if (!activeRepoAliasRef.current) {
       return;
     }
 
     await flushPendingWrite();
 
-    const nextPath = window.prompt('New file path', 'notes/untitled.md');
-
-    if (!nextPath) {
-      return;
-    }
-
     try {
+      const nextName = promptForSimpleName('New file name', 'untitled.md');
+
+      if (nextName === null) {
+        return;
+      }
+
+      const nextPath = parentPath ? `${parentPath}/${nextName}` : nextName;
       const data = await fetchJson('/api/files', {
         method: 'POST',
         body: JSON.stringify({
           repoAlias: activeRepoAliasRef.current,
-          path: nextPath.trim(),
+          path: nextPath,
         }),
       });
 
       setStatus(data.status);
-      await loadState({ forceReloadFile: true, repoAlias: activeRepoAliasRef.current });
-      await loadFile(nextPath.trim(), activeRepoAliasRef.current);
+      setTree(data.tree);
+      await loadFile(nextPath, activeRepoAliasRef.current);
     } catch (error) {
       setSaveError(error.message);
     }
+  }
+
+  async function handleNewFolder(parentPath) {
+    if (!activeRepoAliasRef.current) {
+      return;
+    }
+
+    await flushPendingWrite();
+
+    try {
+      const nextName = promptForSimpleName('New folder name', 'drafts');
+
+      if (nextName === null) {
+        return;
+      }
+
+      const data = await fetchJson('/api/folders', {
+        method: 'POST',
+        body: JSON.stringify({
+          repoAlias: activeRepoAliasRef.current,
+          parentPath,
+          name: nextName,
+        }),
+      });
+
+      setStatus(data.status);
+      setTree(data.tree);
+    } catch (error) {
+      setSaveError(error.message);
+    }
+  }
+
+  async function handleDeleteFolder(folderPath, folderName) {
+    if (!activeRepoAliasRef.current) {
+      return;
+    }
+
+    setSaveError('');
+
+    try {
+      const data = await fetchJson('/api/folders', {
+        method: 'DELETE',
+        body: JSON.stringify({
+          repoAlias: activeRepoAliasRef.current,
+          path: folderPath,
+        }),
+      });
+
+      setStatus(data.status);
+      setTree(data.tree);
+    } catch (error) {
+      setSaveError(error.message);
+    }
+  }
+
+  async function handleRefreshTree() {
+    if (!activeRepoAliasRef.current) {
+      return;
+    }
+
+    setSaveError('');
+    await refreshTreeState({ forceReloadFile: true, repoAlias: activeRepoAliasRef.current });
   }
 
   async function handleSaveAlias(event) {
@@ -533,27 +973,27 @@ export default function App() {
       });
 
       const deletedAlias = editingAlias;
-      const aliases = await loadRepoAliases();
-      const nextActiveAlias =
-        activeRepoAliasRef.current === deletedAlias
-          ? aliases[0] ?? ''
-          : activeRepoAliasRef.current;
+      const deletedActiveAlias = activeRepoAliasRef.current === deletedAlias;
+
+      if (deletedActiveAlias) {
+        navigateToRepoAlias('', { replace: true });
+      }
+
+      await loadRepoAliases();
 
       if (deletedAlias === activeRepoAliasRef.current) {
         pendingWriteRef.current = null;
       }
 
-      setEditingAlias(nextActiveAlias);
+      setEditingAlias('');
       setEditingRepoDraft('');
 
-      if (!nextActiveAlias) {
+      if (deletedActiveAlias) {
         setTree(null);
         setStatus(null);
         setSelectedPath(null);
         setContent('');
         setPublicKey('');
-      } else {
-        await loadRepoAliasDetails(nextActiveAlias);
       }
     } catch (error) {
       setRepoError(error.message);
@@ -634,6 +1074,12 @@ export default function App() {
 
   const repoSlug = status?.repo ?? '';
   const deployKeyUrl = repoSlug ? `https://github.com/${repoSlug}/settings/keys` : '';
+  const workspaceStyle = useMemo(
+    () => ({
+      '--sidebar-width': `${sidebarWidth}px`,
+    }),
+    [sidebarWidth],
+  );
 
   if (appError) {
     return (
@@ -653,7 +1099,7 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <section className="workspace">
+      <section className="workspace" ref={workspaceRef} style={workspaceStyle}>
         <section className="editor-pane">
           <header className="pane-header">
             <div>
@@ -684,9 +1130,11 @@ export default function App() {
 
           <section className="editor-surface">
             {!activeRepoAlias ? (
-              <div className="empty-state">Create or select a repo alias to begin.</div>
+              null
             ) : repoError ? (
               <div className="empty-state">{repoError}</div>
+            ) : loadingTree ? (
+              <div className="empty-state">Loading repository structure…</div>
             ) : selectedPath ? (
               <textarea
                 className="editor-textarea"
@@ -708,22 +1156,22 @@ export default function App() {
           </footer>
         </section>
 
+        <div
+          aria-label="Resize sidebar"
+          aria-orientation="vertical"
+          className="pane-resizer"
+          onKeyDown={handleResizeKeyDown}
+          onPointerDown={handleResizeStart}
+          role="separator"
+          tabIndex={0}
+        />
+
         <aside className="tree-pane">
           <header className="pane-header pane-header-sidebar">
             <div>
               <p className="eyebrow">Repository</p>
               <h2>Files</h2>
             </div>
-            {activeSidebarTab === 'select' ? (
-              <button
-                className="solid-button"
-                disabled={!activeRepoAlias || repoError !== ''}
-                onClick={handleNewFile}
-                type="button"
-              >
-                New file
-              </button>
-            ) : null}
           </header>
 
           <div className="tab-row" role="tablist" aria-label="Repository actions">
@@ -891,15 +1339,27 @@ export default function App() {
           )}
 
           <div className="tree-meta">
-            <span>Auto-sync every {(status?.syncIntervalMs ?? 30_000) / 1000}s</span>
+            <span>Auto-sync to server every {(status?.syncIntervalMs ?? 30_000) / 1000}s</span>
             <span>{repoAliases.length} aliases</span>
           </div>
 
           <div className="tree-scroll">
             {activeSidebarTab === 'select' && tree ? (
-              <TreeNode node={tree} onSelect={handleFileSelect} selectedPath={selectedPath} />
+              <TreeNode
+                node={tree}
+                onCreateFile={!activeRepoAlias || repoError !== '' ? null : handleNewFile}
+                onCreateFolder={!activeRepoAlias || repoError !== '' ? null : handleNewFolder}
+                onDeleteFolder={!activeRepoAlias || repoError !== '' ? null : handleDeleteFolder}
+                onRefresh={!activeRepoAlias || repoError !== '' ? null : handleRefreshTree}
+                onSelect={handleFileSelect}
+                selectedPath={selectedPath}
+              />
+            ) : activeSidebarTab === 'select' && loadingTree ? (
+              <div className="empty-state">Loading repository structure…</div>
             ) : activeSidebarTab === 'select' && activeRepoAlias ? (
               <div className="empty-state">No files loaded for this repo alias yet.</div>
+            ) : activeSidebarTab === 'select' ? (
+              null
             ) : activeSidebarTab === 'aliases' ? (
               <div className="empty-state">Create new aliases or edit the repo URL for an existing alias.</div>
             ) : (
