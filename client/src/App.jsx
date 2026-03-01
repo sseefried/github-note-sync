@@ -731,7 +731,6 @@ export default function App() {
                     </span>
                   </summary>
                   <div className="key-panel-header">
-                    <p className="field-label">Public key for {activeRepoAlias}</p>
                     <button
                       className="ghost-button ghost-button-small"
                       onClick={handleCopyPublicKey}
@@ -744,7 +743,7 @@ export default function App() {
                   <p className="key-copy">
                     {deployKeyUrl ? (
                       <>
-                        Add{' '}
+                        Add public key above as {' '}
                         <a className="key-link" href={deployKeyUrl} rel="noreferrer" target="_blank">
                           deploy key
                         </a>{' '}
