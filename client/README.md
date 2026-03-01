@@ -41,12 +41,12 @@ If `--server-url` is omitted, the client exits with a clear message explaining t
 7. Once GitHub grants that key access, select the repo alias and edit files normally.
 8. Editor changes are debounced on the client for 3 seconds while typing, then flushed immediately on blur, tab hide, page unload, file switch, repo-alias switch, or manual sync.
 9. The right pane is split into tabs:
-   - `Write` for the alias dropdown, file tree, and a collapsed deploy-key section with the public key shown in a boxed panel, an icon-only clipboard button, and a direct GitHub repo link
-   - `Repos` for creating new aliases, editing existing alias repo URLs, viewing the selected alias public key in a read-only box with copy support, and deleting aliases after a browser confirmation prompt
+   - `Write` for the alias dropdown, file tree, and a short configuration pointer to the repo-management tab
+   - `Repos` for creating new aliases, editing existing alias repo URLs, viewing the selected alias deploy key in a read-only box with copy support and GitHub setup link, and deleting aliases after a browser confirmation prompt
 
 ## Architecture
 
-The client is a React app built with Vite. A thin CLI wrapper requires `--server-url=<url>` and injects that value into the build/runtime environment so the UI can call the separate API. The browser separates repo selection and alias management into tabs in the right pane, renders the repository tree in the selection tab, reveals the public key inside a collapsed deploy-key section with a boxed key display and icon-only copy control, and uses the repo-management tab for creating, editing, and deleting alias metadata with an explicit confirmation step before destructive actions while also exposing the selected alias public key in a read-only copyable field. The dark sidebar keeps file-tree helpers and destructive actions visually distinct so state and risk are easy to read at a glance. Editor writes are debounced for 3 seconds while typing before being sent to the server. Pending edits are flushed immediately on blur, page hide, unload, file switch, repo-alias switch, and manual sync.
+The client is a React app built with Vite. A thin CLI wrapper requires `--server-url=<url>` and injects that value into the build/runtime environment so the UI can call the separate API. The browser separates repo selection and alias management into tabs in the right pane, renders the repository tree in the write tab, points configuration tasks to the repo-management tab, and uses that repo-management tab for creating, editing, and deleting alias metadata with an explicit confirmation step before destructive actions while exposing the selected alias deploy key in a read-only copyable field with a direct GitHub setup link. The dark sidebar keeps file-tree helpers and destructive actions visually distinct so state and risk are easy to read at a glance. Editor writes are debounced for 3 seconds while typing before being sent to the server. Pending edits are flushed immediately on blur, page hide, unload, file switch, repo-alias switch, and manual sync.
 
 Design philosophy:
 

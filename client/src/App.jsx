@@ -102,7 +102,6 @@ function TreeNode({ node, selectedPath, onSelect }) {
 
 export default function App() {
   const [activeSidebarTab, setActiveSidebarTab] = useState('select');
-  const [publicKeyExpanded, setPublicKeyExpanded] = useState(false);
   const [tree, setTree] = useState(null);
   const [status, setStatus] = useState(null);
   const [selectedPath, setSelectedPath] = useState(null);
@@ -330,7 +329,6 @@ export default function App() {
       setStatus(null);
       setSelectedPath(null);
       setContent('');
-      setPublicKeyExpanded(false);
       return undefined;
     }
 
@@ -342,14 +340,6 @@ export default function App() {
 
     return () => window.clearInterval(interval);
   }, [activeRepoAlias, missingServerUrl]);
-
-  useEffect(() => {
-    if (missingServerUrl || !activeRepoAlias || !publicKeyExpanded) {
-      return;
-    }
-
-    loadPublicKey(activeRepoAlias);
-  }, [activeRepoAlias, publicKeyExpanded, missingServerUrl]);
 
   useEffect(() => {
     if (missingServerUrl || activeSidebarTab !== 'aliases') {
@@ -407,7 +397,6 @@ export default function App() {
 
     setActiveRepoAlias(nextRepoAlias);
     setEditingAlias(nextRepoAlias);
-    setPublicKeyExpanded(false);
     setCopyStatus('');
   }
 
@@ -448,7 +437,6 @@ export default function App() {
       setEditingAlias(data.repoAlias);
       setEditingRepoDraft(data.repo);
       setPublicKey('');
-      setPublicKeyExpanded(false);
       setActiveSidebarTab('aliases');
     } catch (error) {
       setRepoError(error.message);
@@ -564,7 +552,6 @@ export default function App() {
         setSelectedPath(null);
         setContent('');
         setPublicKey('');
-        setPublicKeyExpanded(false);
       } else {
         await loadRepoAliasDetails(nextActiveAlias);
       }
@@ -778,58 +765,7 @@ export default function App() {
                   </option>
                 ))}
               </select>
-
-              {activeRepoAlias ? (
-                <details
-                  className="key-panel key-panel-collapsible"
-                  onToggle={(event) => {
-                    const nextExpanded = event.currentTarget.open;
-                    setPublicKeyExpanded(nextExpanded);
-                    setCopyStatus('');
-                    if (!nextExpanded) {
-                      setPublicKey('');
-                    }
-                  }}
-                  open={publicKeyExpanded}
-                >
-                  <summary className="key-summary">
-                    <span>SSH deploy key</span>
-                    <span className="key-summary-indicator" aria-hidden="true">
-                      {publicKeyExpanded ? '▾' : '▸'}
-                    </span>
-                  </summary>
-                  <div className="key-panel-header">
-                    <button
-                      aria-label={copyStatus ? `${copyStatus}. Copy deploy key to clipboard` : 'Copy deploy key to clipboard'}
-                      className={`copy-icon-button${copyStatus ? ' copy-icon-button-copied' : ''}`}
-                      onClick={handleCopyPublicKey}
-                      title={copyStatus ? `${copyStatus}. Copy deploy key to clipboard` : 'Copy deploy key to clipboard'}
-                      type="button"
-                    >
-                      <span className="copy-icon" aria-hidden="true">
-                        <span className="copy-icon-back" />
-                        <span className="copy-icon-front" />
-                      </span>
-                    </button>
-                  </div>
-                  <div className="key-block-shell">
-                    <pre className="key-block">{publicKey || 'Loading public key…'}</pre>
-                  </div>
-                  <p className="key-copy">
-                    {deployKeyUrl ? (
-                      <>
-                        Add public key above as {' '}
-                        <a className="key-link" href={deployKeyUrl} rel="noreferrer" target="_blank">
-                          deploy key
-                        </a>{' '}
-                        to {repoSlug}
-                      </>
-                    ) : (
-                      'Add deploy key to repo'
-                    )}
-                  </p>
-                </details>
-              ) : null}
+              <p className="repo-help-copy">See 'Repos' tab for configuration.</p>
             </section>
           ) : (
             <section className="repo-setup">
@@ -891,7 +827,7 @@ export default function App() {
                 />
                 <div className="inline-key-panel">
                   <div className="inline-key-header">
-                    <span className="field-label">SSH public key</span>
+                    <span className="field-label">SSH Deploy Key</span>
                     <button
                       aria-label={
                         copyStatus
@@ -915,8 +851,23 @@ export default function App() {
                     </button>
                   </div>
                   <div className="key-block-shell key-block-shell-inline">
-                    <pre className="key-block">{editingAlias ? publicKey || 'Loading public key…' : 'Select an alias to view its public key.'}</pre>
+                    <pre className="key-block">
+                      {editingAlias ? publicKey || 'Loading public key…' : 'Select an alias to view its public key.'}
+                    </pre>
                   </div>
+                  <p className="key-copy key-copy-inline">
+                    {deployKeyUrl ? (
+                      <>
+                        Add public key above as{' '}
+                        <a className="key-link" href={deployKeyUrl} rel="noreferrer" target="_blank">
+                          deploy key
+                        </a>{' '}
+                        to {repoSlug}
+                      </>
+                    ) : (
+                      'Add deploy key to repo'
+                    )}
+                  </p>
                 </div>
                 <div className="repo-form-actions">
                   <button
