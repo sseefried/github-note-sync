@@ -1,0 +1,360 @@
+:root {
+  color-scheme: light;
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at top left, rgba(227, 190, 143, 0.4), transparent 28%),
+    linear-gradient(135deg, #f8f0e6 0%, #efe7dc 36%, #d4dce5 100%);
+  color: #202329;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+button,
+textarea,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+input,
+select {
+  width: 100%;
+}
+
+.app-shell {
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 18px;
+  min-height: calc(100vh - 48px);
+}
+
+.editor-pane,
+.tree-pane,
+.error-panel {
+  border: 1px solid rgba(22, 30, 43, 0.12);
+  border-radius: 24px;
+  overflow: hidden;
+  backdrop-filter: blur(16px);
+  box-shadow: 0 18px 45px rgba(36, 42, 54, 0.12);
+}
+
+.editor-pane {
+  background: rgba(255, 250, 244, 0.86);
+  display: flex;
+  flex-direction: column;
+}
+
+.tree-pane {
+  background: rgba(24, 31, 44, 0.9);
+  color: #eef2f7;
+  display: flex;
+  flex-direction: column;
+}
+
+.pane-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 24px 24px 16px;
+}
+
+.pane-header h1,
+.pane-header h2,
+.error-panel h1 {
+  margin: 4px 0 0;
+  font-family: "Iowan Old Style", "Palatino Linotype", serif;
+  font-weight: 600;
+  line-height: 1.05;
+}
+
+.pane-header h1 {
+  font-size: clamp(1.6rem, 2vw, 2.4rem);
+}
+
+.pane-header h2,
+.error-panel h1 {
+  font-size: 1.6rem;
+}
+
+.eyebrow {
+  margin: 0;
+  font-size: 0.76rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  opacity: 0.72;
+}
+
+.header-actions,
+.status-row,
+.footer-row,
+.tree-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.status-row,
+.footer-row,
+.tree-meta {
+  padding: 0 24px 16px;
+  font-size: 0.88rem;
+}
+
+.status-row,
+.footer-row {
+  color: rgba(32, 35, 41, 0.72);
+}
+
+.tree-meta {
+  color: rgba(238, 242, 247, 0.74);
+}
+
+.editor-surface {
+  flex: 1;
+  padding: 0 18px 18px;
+}
+
+.editor-textarea {
+  width: 100%;
+  height: 100%;
+  min-height: 60vh;
+  resize: none;
+  border: 1px solid rgba(24, 31, 44, 0.08);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.76);
+  color: #1d2430;
+  padding: 22px;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 0.98rem;
+  line-height: 1.65;
+  outline: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+.editor-textarea:focus,
+.field-input:focus {
+  border-color: rgba(179, 96, 36, 0.38);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    0 0 0 4px rgba(179, 96, 36, 0.08);
+}
+
+.repo-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 24px 18px;
+}
+
+.repo-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.field-label {
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  opacity: 0.76;
+  text-transform: uppercase;
+}
+
+.field-input {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  padding: 10px 12px;
+  outline: none;
+}
+
+.field-input::placeholder {
+  color: rgba(238, 242, 247, 0.45);
+}
+
+.tree-scroll {
+  overflow: auto;
+  padding: 0 16px 20px;
+}
+
+.tree-group,
+.tree-children {
+  display: flex;
+  flex-direction: column;
+}
+
+.tree-children {
+  margin-left: 14px;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  padding-left: 12px;
+}
+
+.tree-directory,
+.tree-file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.tree-directory:hover,
+.tree-file:hover,
+.tree-file-selected {
+  background: rgba(245, 194, 126, 0.14);
+}
+
+.tree-prefix {
+  width: 12px;
+  color: rgba(245, 194, 126, 0.8);
+  font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+}
+
+.sync-badge,
+.ghost-button,
+.solid-button {
+  border-radius: 999px;
+  padding: 10px 14px;
+  font-size: 0.88rem;
+  border: 1px solid transparent;
+}
+
+.sync-badge {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.sync-badge-starting,
+.sync-badge-syncing {
+  background: rgba(243, 188, 101, 0.18);
+  color: #8a4f0d;
+}
+
+.sync-badge-pushed,
+.sync-badge-ready,
+.sync-badge-idle {
+  background: rgba(84, 146, 92, 0.14);
+  color: #225f2b;
+}
+
+.sync-badge-overwritten {
+  background: rgba(203, 93, 64, 0.16);
+  color: #8a2913;
+}
+
+.sync-badge-dirty,
+.sync-badge-error {
+  background: rgba(143, 53, 48, 0.12);
+  color: #7f231f;
+}
+
+.ghost-button {
+  background: transparent;
+  border-color: rgba(24, 31, 44, 0.12);
+}
+
+.ghost-button:disabled,
+.solid-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.solid-button {
+  background: #f5c27d;
+  color: #1a2230;
+}
+
+.key-panel {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 14px;
+}
+
+.key-block {
+  margin: 8px 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 0.82rem;
+}
+
+.key-copy {
+  margin: 0;
+  font-size: 0.82rem;
+  color: rgba(238, 242, 247, 0.68);
+}
+
+.empty-state,
+.error-panel,
+.secondary-copy {
+  color: rgba(32, 35, 41, 0.76);
+}
+
+.empty-state {
+  display: grid;
+  place-items: center;
+  min-height: 240px;
+  text-align: center;
+  padding: 24px;
+}
+
+.error-panel {
+  max-width: 720px;
+  padding: 32px;
+  background: rgba(255, 250, 244, 0.9);
+}
+
+.secondary-copy {
+  margin-bottom: 0;
+}
+
+code {
+  font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+}
+
+@media (max-width: 900px) {
+  .app-shell {
+    padding: 12px;
+  }
+
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .tree-pane {
+    order: -1;
+    min-height: 320px;
+  }
+
+  .status-row,
+  .footer-row,
+  .tree-meta,
+  .pane-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

@@ -1,0 +1,5 @@
+- always update the README.md with installation and usage instructions
+- always update the Architecture section with the basic design and design philosophy of the app
+- this repository is the frontend client only
+- the sibling backend repository is ../github-note-sync-server
+- I specifically allow access to local networks while testing this app e.g. localhost
