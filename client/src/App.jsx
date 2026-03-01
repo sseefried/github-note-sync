@@ -120,6 +120,7 @@ export default function App() {
   const [editingAlias, setEditingAlias] = useState('');
   const [editingRepoDraft, setEditingRepoDraft] = useState('');
   const [savingAlias, setSavingAlias] = useState(false);
+  const [deletingAlias, setDeletingAlias] = useState(false);
   const [registeringRepo, setRegisteringRepo] = useState(false);
 
   const statusRef = useRef(null);
@@ -359,6 +360,14 @@ export default function App() {
   }, [activeRepoAlias, activeSidebarTab, editingAlias, missingServerUrl]);
 
   useEffect(() => {
+    if (missingServerUrl || activeSidebarTab !== 'aliases') {
+      return;
+    }
+
+    loadPublicKey(editingAlias || activeRepoAlias);
+  }, [activeRepoAlias, activeSidebarTab, editingAlias, missingServerUrl]);
+
+  useEffect(() => {
     function flushForLifecycle() {
       flushPendingWriteRef.current?.({ keepalive: true }).catch(() => {});
     }
@@ -504,6 +513,65 @@ export default function App() {
       setRepoError(error.message);
     } finally {
       setSavingAlias(false);
+    }
+  }
+
+  async function handleDeleteAlias() {
+    if (!editingAlias) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Are you sure you want to delete the repo alias "${editingAlias}"? This removes its local clone and SSH keys from the server.`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingAlias(true);
+    setRepoError('');
+    setSaveError('');
+
+    try {
+      if (activeRepoAliasRef.current === editingAlias) {
+        try {
+          await flushPendingWrite();
+        } catch {}
+      }
+
+      await fetchJson(`/api/repos/${encodeURIComponent(editingAlias)}`, {
+        method: 'DELETE',
+      });
+
+      const deletedAlias = editingAlias;
+      const aliases = await loadRepoAliases();
+      const nextActiveAlias =
+        activeRepoAliasRef.current === deletedAlias
+          ? aliases[0] ?? ''
+          : activeRepoAliasRef.current;
+
+      if (deletedAlias === activeRepoAliasRef.current) {
+        pendingWriteRef.current = null;
+      }
+
+      setEditingAlias(nextActiveAlias);
+      setEditingRepoDraft('');
+
+      if (!nextActiveAlias) {
+        setTree(null);
+        setStatus(null);
+        setSelectedPath(null);
+        setContent('');
+        setPublicKey('');
+        setPublicKeyExpanded(false);
+      } else {
+        await loadRepoAliasDetails(nextActiveAlias);
+      }
+    } catch (error) {
+      setRepoError(error.message);
+    } finally {
+      setDeletingAlias(false);
     }
   }
 
@@ -679,7 +747,7 @@ export default function App() {
               role="tab"
               type="button"
             >
-              Select alias
+              Write
             </button>
             <button
               aria-selected={activeSidebarTab === 'create'}
@@ -688,7 +756,7 @@ export default function App() {
               role="tab"
               type="button"
             >
-              Aliases
+              Repos
             </button>
           </div>
 
@@ -732,14 +800,21 @@ export default function App() {
                   </summary>
                   <div className="key-panel-header">
                     <button
-                      className="ghost-button ghost-button-small"
+                      aria-label={copyStatus ? `${copyStatus}. Copy deploy key to clipboard` : 'Copy deploy key to clipboard'}
+                      className={`copy-icon-button${copyStatus ? ' copy-icon-button-copied' : ''}`}
                       onClick={handleCopyPublicKey}
+                      title={copyStatus ? `${copyStatus}. Copy deploy key to clipboard` : 'Copy deploy key to clipboard'}
                       type="button"
                     >
-                      {copyStatus || 'Copy'}
+                      <span className="copy-icon" aria-hidden="true">
+                        <span className="copy-icon-back" />
+                        <span className="copy-icon-front" />
+                      </span>
                     </button>
                   </div>
-                  <pre className="key-block">{publicKey || 'Loading public key…'}</pre>
+                  <div className="key-block-shell">
+                    <pre className="key-block">{publicKey || 'Loading public key…'}</pre>
+                  </div>
                   <p className="key-copy">
                     {deployKeyUrl ? (
                       <>
@@ -791,7 +866,10 @@ export default function App() {
                 <select
                   className="field-input"
                   id="edit-alias-select"
-                  onChange={(event) => setEditingAlias(event.target.value)}
+                  onChange={(event) => {
+                    setEditingAlias(event.target.value);
+                    setCopyStatus('');
+                  }}
                   value={editingAlias || activeRepoAlias}
                 >
                   <option value="">Select an alias to edit</option>
@@ -811,9 +889,52 @@ export default function App() {
                   placeholder="git@github.com:you/notes.git"
                   value={editingRepoDraft}
                 />
-                <button className="solid-button" disabled={!editingAlias || savingAlias} type="submit">
-                  {savingAlias ? 'Saving…' : 'Save alias'}
-                </button>
+                <div className="inline-key-panel">
+                  <div className="inline-key-header">
+                    <span className="field-label">SSH public key</span>
+                    <button
+                      aria-label={
+                        copyStatus
+                          ? `${copyStatus}. Copy deploy key to clipboard`
+                          : 'Copy deploy key to clipboard'
+                      }
+                      className={`copy-icon-button${copyStatus ? ' copy-icon-button-copied' : ''}`}
+                      disabled={!editingAlias || !publicKey}
+                      onClick={handleCopyPublicKey}
+                      title={
+                        copyStatus
+                          ? `${copyStatus}. Copy deploy key to clipboard`
+                          : 'Copy deploy key to clipboard'
+                      }
+                      type="button"
+                    >
+                      <span className="copy-icon" aria-hidden="true">
+                        <span className="copy-icon-back" />
+                        <span className="copy-icon-front" />
+                      </span>
+                    </button>
+                  </div>
+                  <div className="key-block-shell key-block-shell-inline">
+                    <pre className="key-block">{editingAlias ? publicKey || 'Loading public key…' : 'Select an alias to view its public key.'}</pre>
+                  </div>
+                </div>
+                <div className="repo-form-actions">
+                  <button
+                    className="solid-button"
+                    disabled={!editingAlias || savingAlias || deletingAlias}
+                    type="submit"
+                  >
+                    {savingAlias ? 'Saving…' : 'Save alias'}
+                  </button>
+                  <button
+                    className="danger-button"
+                    disabled={!editingAlias || savingAlias || deletingAlias}
+                    onClick={handleDeleteAlias}
+                    type="button"
+                  >
+                    {deletingAlias ? 'Deleting…' : 'Delete alias'}
+                  </button>
+                </div>
               </form>
             </section>
           )}

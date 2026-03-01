@@ -190,6 +190,24 @@ select {
   gap: 12px;
 }
 
+.repo-form-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.inline-key-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.inline-key-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .field-label {
   font-size: 0.8rem;
   letter-spacing: 0.08em;
@@ -254,7 +272,8 @@ select {
 
 .sync-badge,
 .ghost-button,
-.solid-button {
+.solid-button,
+.danger-button {
   border-radius: 999px;
   padding: 10px 14px;
   font-size: 0.88rem;
@@ -296,7 +315,8 @@ select {
 }
 
 .ghost-button:disabled,
-.solid-button:disabled {
+.solid-button:disabled,
+.danger-button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
 }
@@ -304,6 +324,16 @@ select {
 .solid-button {
   background: #f5c27d;
   color: #1a2230;
+}
+
+.danger-button {
+  background: rgba(165, 56, 47, 0.84);
+  border-color: rgba(255, 219, 214, 0.28);
+  color: #fff4f1;
+}
+
+.danger-button:hover {
+  background: rgba(183, 62, 52, 0.92);
 }
 
 .key-panel {
@@ -342,17 +372,76 @@ select {
 .key-panel-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
   padding: 0 14px;
 }
 
-.ghost-button-small {
-  padding: 7px 10px;
+.copy-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  color: inherit;
+}
+
+.copy-icon-button:hover {
+  background: rgba(245, 194, 126, 0.14);
+}
+
+.copy-icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.copy-icon-button-copied {
+  border-color: rgba(245, 194, 126, 0.48);
+  background: rgba(245, 194, 126, 0.18);
+}
+
+.copy-icon {
+  position: relative;
+  display: inline-block;
+  width: 15px;
+  height: 15px;
+}
+
+.copy-icon-back,
+.copy-icon-front {
+  position: absolute;
+  border: 1.5px solid currentColor;
+  border-radius: 4px;
+  background: rgba(255, 250, 244, 0.12);
+}
+
+.copy-icon-back {
+  inset: 1px 0 0 4px;
+  opacity: 0.75;
+}
+
+.copy-icon-front {
+  inset: 4px 3px 0 1px;
+  background: rgba(255, 250, 244, 0.22);
+}
+
+.key-block-shell {
+  margin: 8px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  background: rgba(12, 16, 24, 0.22);
+}
+
+.key-block-shell-inline {
+  margin: 0;
 }
 
 .key-block {
-  margin: 8px 14px;
+  margin: 0;
+  padding: 12px 14px;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-all;
@@ -375,6 +464,10 @@ select {
 .error-panel,
 .secondary-copy {
   color: rgba(32, 35, 41, 0.76);
+}
+
+.tree-pane .empty-state {
+  color: rgba(238, 242, 247, 0.84);
 }
 
 .empty-state {
@@ -423,5 +516,9 @@ code {
 
   .tab-row {
     grid-template-columns: 1fr;
+  }
+
+  .repo-form-actions {
+    flex-direction: column;
   }
 }
