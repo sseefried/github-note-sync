@@ -40,10 +40,13 @@ If `--server-url` is omitted, the client exits with a clear message explaining t
 6. Copy the generated public key from the client and add it to GitHub for that repository.
 7. Once GitHub grants that key access, select the repo alias and edit files normally.
 8. Editor changes are debounced on the client for 3 seconds while typing, then flushed immediately on blur, tab hide, page unload, file switch, repo-alias switch, or manual sync.
+9. The right pane is split into tabs:
+   - `Select alias` for the alias dropdown, file tree, and a collapsed deploy-key section with copy-to-clipboard support plus a direct GitHub repo link
+   - `Aliases` for creating new aliases and editing existing alias repo URLs
 
 ## Architecture
 
-The client is a React app built with Vite. A thin CLI wrapper requires `--server-url=<url>` and injects that value into the build/runtime environment so the UI can call the separate API. The browser lets the user create and select repo aliases, shows the server-generated public key for the active alias, renders the repository tree in the right pane, and debounces editor writes for 3 seconds while typing before sending them to the server. Pending edits are flushed immediately on blur, page hide, unload, file switch, repo-alias switch, and manual sync.
+The client is a React app built with Vite. A thin CLI wrapper requires `--server-url=<url>` and injects that value into the build/runtime environment so the UI can call the separate API. The browser separates repo selection and alias management into tabs in the right pane, renders the repository tree in the selection tab, reveals the public key inside a collapsed deploy-key section, and uses the aliases tab for both creating and editing alias metadata. Editor writes are debounced for 3 seconds while typing before being sent to the server. Pending edits are flushed immediately on blur, page hide, unload, file switch, repo-alias switch, and manual sync.
 
 Design philosophy:
 

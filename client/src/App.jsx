@@ -101,6 +101,8 @@ function TreeNode({ node, selectedPath, onSelect }) {
 }
 
 export default function App() {
+  const [activeSidebarTab, setActiveSidebarTab] = useState('select');
+  const [publicKeyExpanded, setPublicKeyExpanded] = useState(false);
   const [tree, setTree] = useState(null);
   const [status, setStatus] = useState(null);
   const [selectedPath, setSelectedPath] = useState(null);
@@ -114,6 +116,10 @@ export default function App() {
   const [repoAliasDraft, setRepoAliasDraft] = useState('');
   const [repoDraft, setRepoDraft] = useState('');
   const [publicKey, setPublicKey] = useState('');
+  const [copyStatus, setCopyStatus] = useState('');
+  const [editingAlias, setEditingAlias] = useState('');
+  const [editingRepoDraft, setEditingRepoDraft] = useState('');
+  const [savingAlias, setSavingAlias] = useState(false);
   const [registeringRepo, setRegisteringRepo] = useState(false);
 
   const statusRef = useRef(null);
@@ -216,6 +222,22 @@ export default function App() {
     }
   }
 
+  async function loadRepoAliasDetails(repoAlias) {
+    if (!repoAlias) {
+      setEditingAlias('');
+      setEditingRepoDraft('');
+      return;
+    }
+
+    try {
+      const data = await fetchJson(`/api/repos/${encodeURIComponent(repoAlias)}`);
+      setEditingAlias(data.repoAlias);
+      setEditingRepoDraft(data.repo);
+    } catch (error) {
+      setRepoError(error.message);
+    }
+  }
+
   async function loadFile(path, repoAlias = activeRepoAliasRef.current) {
     if (!path || !repoAlias) {
       setContent('');
@@ -307,10 +329,10 @@ export default function App() {
       setStatus(null);
       setSelectedPath(null);
       setContent('');
+      setPublicKeyExpanded(false);
       return undefined;
     }
 
-    loadPublicKey(activeRepoAlias);
     loadState({ forceReloadFile: true, repoAlias: activeRepoAlias });
 
     const interval = window.setInterval(() => {
@@ -319,6 +341,22 @@ export default function App() {
 
     return () => window.clearInterval(interval);
   }, [activeRepoAlias, missingServerUrl]);
+
+  useEffect(() => {
+    if (missingServerUrl || !activeRepoAlias || !publicKeyExpanded) {
+      return;
+    }
+
+    loadPublicKey(activeRepoAlias);
+  }, [activeRepoAlias, publicKeyExpanded, missingServerUrl]);
+
+  useEffect(() => {
+    if (missingServerUrl || activeSidebarTab !== 'aliases') {
+      return;
+    }
+
+    loadRepoAliasDetails(editingAlias || activeRepoAlias);
+  }, [activeRepoAlias, activeSidebarTab, editingAlias, missingServerUrl]);
 
   useEffect(() => {
     function flushForLifecycle() {
@@ -359,6 +397,22 @@ export default function App() {
     } catch {}
 
     setActiveRepoAlias(nextRepoAlias);
+    setEditingAlias(nextRepoAlias);
+    setPublicKeyExpanded(false);
+    setCopyStatus('');
+  }
+
+  async function handleCopyPublicKey() {
+    if (!publicKey) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(publicKey);
+      setCopyStatus('Copied');
+    } catch {
+      setCopyStatus('Copy failed');
+    }
   }
 
   async function handleRegisterRepo(event) {
@@ -382,6 +436,11 @@ export default function App() {
       setRepoDraft('');
       await loadRepoAliases();
       setActiveRepoAlias(data.repoAlias);
+      setEditingAlias(data.repoAlias);
+      setEditingRepoDraft(data.repo);
+      setPublicKey('');
+      setPublicKeyExpanded(false);
+      setActiveSidebarTab('aliases');
     } catch (error) {
       setRepoError(error.message);
     } finally {
@@ -416,6 +475,35 @@ export default function App() {
       await loadFile(nextPath.trim(), activeRepoAliasRef.current);
     } catch (error) {
       setSaveError(error.message);
+    }
+  }
+
+  async function handleSaveAlias(event) {
+    event.preventDefault();
+
+    if (!editingAlias) {
+      return;
+    }
+
+    setSavingAlias(true);
+    setRepoError('');
+
+    try {
+      const data = await fetchJson(`/api/repos/${encodeURIComponent(editingAlias)}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          repo: editingRepoDraft.trim(),
+        }),
+      });
+
+      setEditingRepoDraft(data.repo);
+      if (activeRepoAlias === data.repoAlias) {
+        await loadState({ forceReloadFile: true, repoAlias: data.repoAlias });
+      }
+    } catch (error) {
+      setRepoError(error.message);
+    } finally {
+      setSavingAlias(false);
     }
   }
 
@@ -488,6 +576,9 @@ export default function App() {
 
     return selectedPath;
   }, [activeRepoAlias, selectedPath]);
+
+  const repoSlug = status?.repo ?? '';
+  const deployKeyUrl = repoSlug ? `https://github.com/${repoSlug}/settings/keys` : '';
 
   if (appError) {
     return (
@@ -568,70 +659,165 @@ export default function App() {
               <p className="eyebrow">Repository</p>
               <h2>Files</h2>
             </div>
-            <button
-              className="solid-button"
-              disabled={!activeRepoAlias || repoError !== ''}
-              onClick={handleNewFile}
-              type="button"
-            >
-              New file
-            </button>
+            {activeSidebarTab === 'select' ? (
+              <button
+                className="solid-button"
+                disabled={!activeRepoAlias || repoError !== ''}
+                onClick={handleNewFile}
+                type="button"
+              >
+                New file
+              </button>
+            ) : null}
           </header>
 
-          <section className="repo-setup">
-            <label className="field-label" htmlFor="repo-alias-select">
-              Active repo alias
-            </label>
-            <select
-              className="field-input"
-              id="repo-alias-select"
-              onChange={handleRepoAliasChange}
-              value={activeRepoAlias}
+          <div className="tab-row" role="tablist" aria-label="Repository actions">
+            <button
+              aria-selected={activeSidebarTab === 'select'}
+              className={`tab-button ${activeSidebarTab === 'select' ? 'tab-button-active' : ''}`}
+              onClick={() => setActiveSidebarTab('select')}
+              role="tab"
+              type="button"
             >
-              <option value="">Select a repo alias</option>
-              {repoAliases.map((repoAlias) => (
-                <option key={repoAlias} value={repoAlias}>
-                  {repoAlias}
-                </option>
-              ))}
-            </select>
+              Select alias
+            </button>
+            <button
+              aria-selected={activeSidebarTab === 'create'}
+              className={`tab-button ${activeSidebarTab === 'aliases' ? 'tab-button-active' : ''}`}
+              onClick={() => setActiveSidebarTab('aliases')}
+              role="tab"
+              type="button"
+            >
+              Aliases
+            </button>
+          </div>
 
-            <form className="repo-form" onSubmit={handleRegisterRepo}>
-              <label className="field-label" htmlFor="repo-alias-input">
-                New repo alias
+          {activeSidebarTab === 'select' ? (
+            <section className="repo-setup">
+              <label className="field-label" htmlFor="repo-alias-select">
+                Active repo alias
               </label>
-              <input
+              <select
                 className="field-input"
-                id="repo-alias-input"
-                onChange={(event) => setRepoAliasDraft(event.target.value)}
-                placeholder="personal-notes"
-                value={repoAliasDraft}
-              />
-              <label className="field-label" htmlFor="repo-input">
-                GitHub SSH repo
-              </label>
-              <input
-                className="field-input"
-                id="repo-input"
-                onChange={(event) => setRepoDraft(event.target.value)}
-                placeholder="git@github.com:you/notes.git"
-                value={repoDraft}
-              />
-              <button className="solid-button" disabled={registeringRepo} type="submit">
-                {registeringRepo ? 'Creating…' : 'Create alias'}
-              </button>
-            </form>
+                id="repo-alias-select"
+                onChange={handleRepoAliasChange}
+                value={activeRepoAlias}
+              >
+                <option value="">Select a repo alias</option>
+                {repoAliases.map((repoAlias) => (
+                  <option key={repoAlias} value={repoAlias}>
+                    {repoAlias}
+                  </option>
+                ))}
+              </select>
 
-            {publicKey ? (
-              <div className="key-panel">
-                <p className="field-label">Public key for {activeRepoAlias || 'repo alias'}</p>
-                <pre className="key-block">{publicKey}</pre>
-                <p className="key-copy">
-                  Add this public key to GitHub before trying to read or sync the repository.
-                </p>
-              </div>
-            ) : null}
-          </section>
+              {activeRepoAlias ? (
+                <details
+                  className="key-panel key-panel-collapsible"
+                  onToggle={(event) => {
+                    const nextExpanded = event.currentTarget.open;
+                    setPublicKeyExpanded(nextExpanded);
+                    setCopyStatus('');
+                    if (!nextExpanded) {
+                      setPublicKey('');
+                    }
+                  }}
+                  open={publicKeyExpanded}
+                >
+                  <summary className="key-summary">
+                    <span>SSH deploy key</span>
+                    <span className="key-summary-indicator" aria-hidden="true">
+                      {publicKeyExpanded ? '▾' : '▸'}
+                    </span>
+                  </summary>
+                  <div className="key-panel-header">
+                    <p className="field-label">Public key for {activeRepoAlias}</p>
+                    <button
+                      className="ghost-button ghost-button-small"
+                      onClick={handleCopyPublicKey}
+                      type="button"
+                    >
+                      {copyStatus || 'Copy'}
+                    </button>
+                  </div>
+                  <pre className="key-block">{publicKey || 'Loading public key…'}</pre>
+                  <p className="key-copy">
+                    {deployKeyUrl ? (
+                      <>
+                        Add{' '}
+                        <a className="key-link" href={deployKeyUrl} rel="noreferrer" target="_blank">
+                          deploy key
+                        </a>{' '}
+                        to {repoSlug}
+                      </>
+                    ) : (
+                      'Add deploy key to repo'
+                    )}
+                  </p>
+                </details>
+              ) : null}
+            </section>
+          ) : (
+            <section className="repo-setup">
+              <form className="repo-form" onSubmit={handleRegisterRepo}>
+                <label className="field-label" htmlFor="repo-alias-input">
+                  New repo alias
+                </label>
+                <input
+                  className="field-input"
+                  id="repo-alias-input"
+                  onChange={(event) => setRepoAliasDraft(event.target.value)}
+                  placeholder="personal-notes"
+                  value={repoAliasDraft}
+                />
+                <label className="field-label" htmlFor="repo-input">
+                  GitHub SSH repo
+                </label>
+                <input
+                  className="field-input"
+                  id="repo-input"
+                  onChange={(event) => setRepoDraft(event.target.value)}
+                  placeholder="git@github.com:you/notes.git"
+                  value={repoDraft}
+                />
+                <button className="solid-button" disabled={registeringRepo} type="submit">
+                  {registeringRepo ? 'Creating…' : 'Create alias'}
+                </button>
+              </form>
+
+              <form className="repo-form" onSubmit={handleSaveAlias}>
+                <label className="field-label" htmlFor="edit-alias-select">
+                  Edit existing alias
+                </label>
+                <select
+                  className="field-input"
+                  id="edit-alias-select"
+                  onChange={(event) => setEditingAlias(event.target.value)}
+                  value={editingAlias || activeRepoAlias}
+                >
+                  <option value="">Select an alias to edit</option>
+                  {repoAliases.map((repoAlias) => (
+                    <option key={repoAlias} value={repoAlias}>
+                      {repoAlias}
+                    </option>
+                  ))}
+                </select>
+                <label className="field-label" htmlFor="edit-repo-input">
+                  GitHub SSH repo
+                </label>
+                <input
+                  className="field-input"
+                  id="edit-repo-input"
+                  onChange={(event) => setEditingRepoDraft(event.target.value)}
+                  placeholder="git@github.com:you/notes.git"
+                  value={editingRepoDraft}
+                />
+                <button className="solid-button" disabled={!editingAlias || savingAlias} type="submit">
+                  {savingAlias ? 'Saving…' : 'Save alias'}
+                </button>
+              </form>
+            </section>
+          )}
 
           <div className="tree-meta">
             <span>Auto-sync every {(status?.syncIntervalMs ?? 30_000) / 1000}s</span>
@@ -639,10 +825,12 @@ export default function App() {
           </div>
 
           <div className="tree-scroll">
-            {tree ? (
+            {activeSidebarTab === 'select' && tree ? (
               <TreeNode node={tree} onSelect={handleFileSelect} selectedPath={selectedPath} />
-            ) : activeRepoAlias ? (
+            ) : activeSidebarTab === 'select' && activeRepoAlias ? (
               <div className="empty-state">No files loaded for this repo alias yet.</div>
+            ) : activeSidebarTab === 'aliases' ? (
+              <div className="empty-state">Create new aliases or edit the repo URL for an existing alias.</div>
             ) : (
               <div className="empty-state">Create a repo alias to generate its SSH keypair.</div>
             )}

@@ -164,6 +164,26 @@ select {
   padding: 0 24px 18px;
 }
 
+.tab-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 0 24px 18px;
+}
+
+.tab-button {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  padding: 10px 12px;
+}
+
+.tab-button-active {
+  background: rgba(245, 194, 126, 0.18);
+  border-color: rgba(245, 194, 126, 0.35);
+}
+
 .repo-form {
   display: flex;
   flex-direction: column;
@@ -293,8 +313,46 @@ select {
   padding: 14px;
 }
 
+.key-panel-collapsible {
+  padding: 0;
+}
+
+.key-summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.key-summary::-webkit-details-marker {
+  display: none;
+}
+
+.key-summary-indicator {
+  font-size: 0.95rem;
+  opacity: 0.9;
+}
+
+.key-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 14px;
+}
+
+.ghost-button-small {
+  padding: 7px 10px;
+}
+
 .key-block {
-  margin: 8px 0;
+  margin: 8px 14px;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-all;
@@ -304,8 +362,13 @@ select {
 
 .key-copy {
   margin: 0;
+  padding: 0 14px 14px;
   font-size: 0.82rem;
   color: rgba(238, 242, 247, 0.68);
+}
+
+.key-link {
+  color: inherit;
 }
 
 .empty-state,
@@ -356,5 +419,9 @@ code {
   .pane-header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .tab-row {
+    grid-template-columns: 1fr;
   }
 }
