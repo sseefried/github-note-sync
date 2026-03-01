@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 const SERVER_URL = (import.meta.env.VITE_SERVER_URL ?? '').trim().replace(/\/$/, '');
+const CLIENT_WRITE_DEBOUNCE_MS = 3_000;
 
 async function fetchJson(url, options) {
   const response = await fetch(`${SERVER_URL}${url}`, {
@@ -118,6 +119,9 @@ export default function App() {
   const statusRef = useRef(null);
   const selectedPathRef = useRef(null);
   const activeRepoAliasRef = useRef('');
+  const flushPendingWriteRef = useRef(null);
+  const flushTimerRef = useRef(null);
+  const pendingWriteRef = useRef(null);
   const writeSequenceRef = useRef(0);
 
   const missingServerUrl = SERVER_URL === '';
@@ -133,6 +137,53 @@ export default function App() {
   useEffect(() => {
     activeRepoAliasRef.current = activeRepoAlias;
   }, [activeRepoAlias]);
+
+  async function flushPendingWrite({ keepalive = false } = {}) {
+    if (flushTimerRef.current) {
+      window.clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+
+    const pendingWrite = pendingWriteRef.current;
+
+    if (!pendingWrite) {
+      return;
+    }
+
+    pendingWriteRef.current = null;
+
+    try {
+      const data = await fetchJson('/api/file', {
+        method: 'PUT',
+        body: JSON.stringify({
+          repoAlias: pendingWrite.repoAlias,
+          path: pendingWrite.path,
+          content: pendingWrite.content,
+        }),
+        keepalive,
+      });
+
+      if (pendingWrite.sequence === writeSequenceRef.current) {
+        setStatus(data.status);
+      }
+    } catch (error) {
+      pendingWriteRef.current = pendingWrite;
+      setSaveError(error.message);
+      throw error;
+    }
+  }
+
+  function schedulePendingWrite() {
+    if (flushTimerRef.current) {
+      window.clearTimeout(flushTimerRef.current);
+    }
+
+    flushTimerRef.current = window.setTimeout(() => {
+      flushPendingWrite().catch(() => {});
+    }, CLIENT_WRITE_DEBOUNCE_MS);
+  }
+
+  flushPendingWriteRef.current = flushPendingWrite;
 
   async function loadRepoAliases() {
     const data = await fetchJson('/api/repos');
@@ -216,10 +267,17 @@ export default function App() {
         selectedPathRef.current && hasFilePath(data.tree, selectedPathRef.current)
           ? selectedPathRef.current
           : findFirstFile(data.tree);
+      const hasPendingWriteForActiveFile =
+        pendingWriteRef.current?.repoAlias === repoAlias &&
+        pendingWriteRef.current?.path === activePath;
 
       const stateChanged = data.status.stateVersion !== statusRef.current?.stateVersion;
 
-      if (activePath && (forceReloadFile || stateChanged || activePath !== selectedPathRef.current)) {
+      if (
+        activePath &&
+        !hasPendingWriteForActiveFile &&
+        (forceReloadFile || stateChanged || activePath !== selectedPathRef.current)
+      ) {
         await loadFile(activePath, repoAlias);
       } else if (!activePath) {
         setSelectedPath(null);
@@ -262,8 +320,45 @@ export default function App() {
     return () => window.clearInterval(interval);
   }, [activeRepoAlias, missingServerUrl]);
 
+  useEffect(() => {
+    function flushForLifecycle() {
+      flushPendingWriteRef.current?.({ keepalive: true }).catch(() => {});
+    }
+
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'hidden') {
+        flushForLifecycle();
+      }
+    }
+
+    window.addEventListener('beforeunload', flushForLifecycle);
+    window.addEventListener('pagehide', flushForLifecycle);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      if (flushTimerRef.current) {
+        window.clearTimeout(flushTimerRef.current);
+      }
+
+      window.removeEventListener('beforeunload', flushForLifecycle);
+      window.removeEventListener('pagehide', flushForLifecycle);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
+
   async function handleFileSelect(path) {
+    await flushPendingWrite();
     await loadFile(path, activeRepoAliasRef.current);
+  }
+
+  async function handleRepoAliasChange(event) {
+    const nextRepoAlias = event.target.value;
+
+    try {
+      await flushPendingWrite();
+    } catch {}
+
+    setActiveRepoAlias(nextRepoAlias);
   }
 
   async function handleRegisterRepo(event) {
@@ -299,6 +394,8 @@ export default function App() {
       return;
     }
 
+    await flushPendingWrite();
+
     const nextPath = window.prompt('New file path', 'notes/untitled.md');
 
     if (!nextPath) {
@@ -328,6 +425,7 @@ export default function App() {
     }
 
     setSaveError('');
+    await flushPendingWrite();
 
     try {
       const data = await fetchJson('/api/sync', {
@@ -365,23 +463,22 @@ export default function App() {
     }
 
     const sequence = ++writeSequenceRef.current;
-
-    try {
-      const data = await fetchJson('/api/file', {
-        method: 'PUT',
-        body: JSON.stringify({
-          repoAlias: activeRepoAliasRef.current,
-          path: activePath,
-          content: nextContent,
-        }),
-      });
-
-      if (sequence === writeSequenceRef.current) {
-        setStatus(data.status);
-      }
-    } catch (error) {
-      setSaveError(error.message);
-    }
+    pendingWriteRef.current = {
+      content: nextContent,
+      path: activePath,
+      repoAlias: activeRepoAliasRef.current,
+      sequence,
+    };
+    setStatus((currentStatus) =>
+      currentStatus
+        ? {
+            ...currentStatus,
+            lastSyncMessage: `Unsynced edits in ${activePath}.`,
+            lastSyncStatus: 'dirty',
+          }
+        : currentStatus,
+    );
+    schedulePendingWrite();
   }
 
   const title = useMemo(() => {
@@ -448,6 +545,9 @@ export default function App() {
               <textarea
                 className="editor-textarea"
                 onChange={handleEditorChange}
+                onBlur={() => {
+                  flushPendingWrite().catch(() => {});
+                }}
                 spellCheck={false}
                 value={content}
               />
@@ -485,7 +585,7 @@ export default function App() {
             <select
               className="field-input"
               id="repo-alias-select"
-              onChange={(event) => setActiveRepoAlias(event.target.value)}
+              onChange={handleRepoAliasChange}
               value={activeRepoAlias}
             >
               <option value="">Select a repo alias</option>
