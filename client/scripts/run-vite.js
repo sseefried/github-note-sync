@@ -34,7 +34,7 @@ const { serverUrl, remainingArgs } = extractRuntimeOptions(cliArgs);
 
 if (!serverUrl) {
   console.error(
-    `Missing required --server-url argument.\n\nExample:\n  npm run ${mode} -- --server-url=http://127.0.0.1:3001`,
+    `Missing required --server-url argument.\n\nExample:\n  npm run ${mode} -- --server-url=https://api.notes.localhost`,
   );
   process.exit(1);
 }

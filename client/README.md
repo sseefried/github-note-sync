@@ -14,25 +14,25 @@ The client repository contains the authenticated web app: a login and repo-manag
 ## Usage
 
 1. Start the server repository first.
-2. Start the client in development and pass the server URL explicitly:
+2. Start the client in development and pass the HTTPS API origin explicitly:
 
    ```bash
-   npm run dev -- --server-url=http://127.0.0.1:3001
+   npm run dev -- --server-url=https://api.notes.localhost
    ```
 
-3. Build the client with an explicit server URL:
+3. Build the client with an explicit HTTPS server URL:
 
    ```bash
-   npm run build -- --server-url=http://127.0.0.1:3001
+   npm run build -- --server-url=https://api.notes.localhost
    ```
 
 4. Preview the built client with the same argument:
 
    ```bash
-   npm run start -- --server-url=http://127.0.0.1:3001
+   npm run start -- --server-url=https://api.notes.localhost
    ```
 
-If `--server-url` is omitted, the client exits with a clear message explaining that it is required. If the server is configured to listen on a different port, use that port in `--server-url`.
+If `--server-url` is omitted, the client exits with a clear message explaining that it is required. Because the browser app only runs on HTTPS pages, use the public HTTPS API URL rather than an internal HTTP app port.
 
 The Vite dev server and preview server still listen on HTTP internally, but the browser client now refuses to run unless the page itself is loaded over HTTPS. In practice, open the app through your reverse proxy rather than visiting the raw Vite URL directly.
 
@@ -118,7 +118,7 @@ App-user deployment on the internal server:
 
 ```bash
 scripts/install-user-service.sh \
-  --server-url=https://203.0.113.10 \
+  --server-url=https://notes.example.com \
   --listen-port 4173
 ```
 
@@ -130,6 +130,7 @@ This script:
 - reloads, enables, and restarts the user service
 
 The client service uses `vite preview`, so the systemd unit serves the prebuilt `dist/` output on the configured port.
+That internal preview listener is meant to sit behind your HTTPS reverse proxy; browsing directly to its HTTP port should show the HTTPS-required screen.
 
 ## Architecture
 
@@ -147,4 +148,5 @@ Design philosophy:
 - Keep deployment simple by building the client once and running it under a user systemd unit.
 - Keep TLS termination outside the app so local and production topology stay aligned.
 - Refuse to boot the browser app on non-HTTPS pages so the proxy requirement is visible immediately.
+- Bake the public HTTPS base URL into the production bundle so browsers never target the internal HTTP app ports.
 - Surface configuration and authentication failures clearly at startup instead of failing silently.

@@ -927,7 +927,7 @@ export default function App() {
   useEffect(() => {
     if (missingServerUrl) {
       setAppError(
-        'Missing server URL. Start the client with --server-url=http://127.0.0.1:3001.',
+        'Missing server URL. Start the client with --server-url=https://api.notes.localhost.',
       );
       return;
     }
@@ -1478,7 +1478,7 @@ export default function App() {
           <h1>GitHub Note Sync</h1>
           <p>{appError}</p>
           <p className="secondary-copy">
-            Start the client with <code>npm run dev -- --server-url=http://127.0.0.1:3001</code>
+            Start the client with <code>npm run dev -- --server-url=https://api.notes.localhost</code>
             , or point it at the deployed API URL.
           </p>
         </section>

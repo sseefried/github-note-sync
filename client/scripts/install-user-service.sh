@@ -6,7 +6,7 @@ INSTALL_DIR="${HOME}/.local/opt/${SERVICE_NAME}"
 SYSTEMD_DIR="${HOME}/.config/systemd/user"
 UNIT_PATH="${SYSTEMD_DIR}/${SERVICE_NAME}.service"
 LISTEN_PORT="4173"
-SERVER_URL="http://127.0.0.1:3001"
+SERVER_URL=""
 
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -25,6 +25,19 @@ EOF
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
     printf 'Missing required command: %s\n' "$1" >&2
+    exit 1
+  fi
+}
+
+require_https_url() {
+  if [[ -z "${SERVER_URL}" ]]; then
+    printf 'Missing required --server-url argument.\n' >&2
+    printf 'Example: scripts/install-user-service.sh --server-url=https://notes.example.com\n' >&2
+    exit 1
+  fi
+
+  if [[ ! "${SERVER_URL}" =~ ^https:// ]]; then
+    printf '--server-url must start with https:// because the browser client refuses to run on HTTP pages.\n' >&2
     exit 1
   fi
 }
@@ -101,6 +114,7 @@ require_command node
 require_command npm
 require_command systemctl
 require_command tar
+require_https_url
 
 copy_repo
 
@@ -118,6 +132,7 @@ systemctl --user restart "${SERVICE_NAME}.service"
 
 printf 'Installed %s into %s\n' "${SERVICE_NAME}" "${INSTALL_DIR}"
 printf 'User unit written to %s\n' "${UNIT_PATH}"
-printf 'Client preview URL: http://127.0.0.1:%s\n' "${LISTEN_PORT}"
+printf 'Configured browser base URL: %s\n' "${SERVER_URL}"
+printf 'Internal preview listener: http://127.0.0.1:%s (serve it only through your HTTPS reverse proxy)\n' "${LISTEN_PORT}"
 printf 'Service status: systemctl --user status %s.service\n' "${SERVICE_NAME}"
 printf 'Note: full reboot persistence still requires root to run: loginctl enable-linger %s\n' "${USER}"
