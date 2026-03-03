@@ -8,22 +8,65 @@ const MIN_SIDEBAR_WIDTH = 280;
 const MAX_SIDEBAR_WIDTH = 720;
 const MIN_EDITOR_WIDTH = 320;
 const SIDEBAR_WIDTH_STORAGE_KEY = 'github-note-sync.sidebar-width';
+const SESSION_TOKEN_STORAGE_KEY = 'github-note-sync.session-token';
 
-async function fetchJson(url, options) {
+class ApiError extends Error {
+  constructor(message, status) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
+async function fetchJson(url, options = {}) {
+  const headers = new Headers(options.headers ?? {});
+  const sessionToken = getStoredSessionToken();
+
+  if (options.body && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+
+  if (sessionToken && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${sessionToken}`);
+  }
+
   const response = await fetch(`${SERVER_URL}${url}`, {
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    credentials: 'include',
     ...options,
+    headers,
   });
 
-  const data = await response.json();
+  const contentType = response.headers.get('content-type') ?? '';
+  const data = contentType.includes('application/json')
+    ? await response.json()
+    : { error: await response.text() };
 
   if (!response.ok) {
-    throw new Error(data.error ?? 'Request failed.');
+    throw new ApiError(data.error ?? 'Request failed.', response.status);
   }
 
   return data;
+}
+
+function getStoredSessionToken() {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+
+  return window.sessionStorage.getItem(SESSION_TOKEN_STORAGE_KEY) ?? '';
+}
+
+function setStoredSessionToken(sessionToken) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  if (typeof sessionToken === 'string' && sessionToken.trim() !== '') {
+    window.sessionStorage.setItem(SESSION_TOKEN_STORAGE_KEY, sessionToken.trim());
+    return;
+  }
+
+  window.sessionStorage.removeItem(SESSION_TOKEN_STORAGE_KEY);
 }
 
 function findFirstFile(node) {
@@ -108,7 +151,13 @@ function FilePlusIcon() {
         strokeWidth="1.25"
       />
       <path d="M9 1.75V5h3.25" fill="none" stroke="currentColor" strokeWidth="1.25" />
-      <path d="M8 7.1v4.2M5.9 9.2h4.2" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.25" />
+      <path
+        d="M8 7.1v4.2M5.9 9.2h4.2"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.25"
+      />
     </svg>
   );
 }
@@ -122,7 +171,13 @@ function FolderPlusIcon() {
         stroke="currentColor"
         strokeWidth="1.25"
       />
-      <path d="M8 6.8v3.6M6.2 8.6h3.6" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.25" />
+      <path
+        d="M8 6.8v3.6M6.2 8.6h3.6"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.25"
+      />
     </svg>
   );
 }
@@ -274,13 +329,127 @@ function TreeNode({
               onCreateFolder={onCreateFolder}
               onDeleteFolder={onDeleteFolder}
               onRefresh={onRefresh}
-              selectedPath={selectedPath}
               onSelect={onSelect}
+              selectedPath={selectedPath}
             />
           ))}
         </div>
       ) : null}
     </div>
+  );
+}
+
+function AuthScreen({
+  authBusy,
+  authError,
+  authMode,
+  confirmPasswordDraft,
+  hasUsers,
+  onModeChange,
+  onSubmit,
+  passwordDraft,
+  registrationOpen,
+  serverUrl,
+  setConfirmPasswordDraft,
+  setPasswordDraft,
+  setUsernameDraft,
+  usernameDraft,
+}) {
+  const title = hasUsers ? 'Sign in to GitHub Note Sync' : 'Create the first GitHub Note Sync user';
+  const submitLabel =
+    authMode === 'register' ? (hasUsers ? 'Create account' : 'Create first user') : 'Sign in';
+
+  return (
+    <main className="app-shell auth-shell">
+      <section className="auth-panel">
+        <div className="auth-copy">
+          <p className="eyebrow">Authentication required</p>
+          <h1>{title}</h1>
+          <p>
+            Passwords and sessions are verified by the server. SSH keys stay on the server and are
+            still generated per repo alias.
+          </p>
+          <p className="secondary-copy">
+            Server: <code>{serverUrl}</code>
+          </p>
+        </div>
+
+        <form className="auth-form" onSubmit={onSubmit}>
+          {registrationOpen ? (
+            <div className="auth-mode-row" role="tablist" aria-label="Authentication mode">
+              <button
+                aria-selected={authMode === 'login'}
+                className={`auth-mode-button ${authMode === 'login' ? 'auth-mode-button-active' : ''}`}
+                onClick={() => onModeChange('login')}
+                role="tab"
+                type="button"
+              >
+                Sign in
+              </button>
+              <button
+                aria-selected={authMode === 'register'}
+                className={`auth-mode-button ${authMode === 'register' ? 'auth-mode-button-active' : ''}`}
+                onClick={() => onModeChange('register')}
+                role="tab"
+                type="button"
+              >
+                Register
+              </button>
+            </div>
+          ) : null}
+
+          <label className="field-label field-label-light" htmlFor="auth-username">
+            Username
+          </label>
+          <input
+            autoComplete="username"
+            className="auth-input"
+            id="auth-username"
+            onChange={(event) => setUsernameDraft(event.target.value)}
+            placeholder="notes-admin"
+            value={usernameDraft}
+          />
+
+          <label className="field-label field-label-light" htmlFor="auth-password">
+            Password
+          </label>
+          <input
+            autoComplete={authMode === 'register' ? 'new-password' : 'current-password'}
+            className="auth-input"
+            id="auth-password"
+            onChange={(event) => setPasswordDraft(event.target.value)}
+            placeholder="At least 8 characters"
+            type="password"
+            value={passwordDraft}
+          />
+
+          {authMode === 'register' ? (
+            <>
+              <label className="field-label field-label-light" htmlFor="auth-password-confirm">
+                Confirm password
+              </label>
+              <input
+                autoComplete="new-password"
+                className="auth-input"
+                id="auth-password-confirm"
+                onChange={(event) => setConfirmPasswordDraft(event.target.value)}
+                placeholder="Repeat password"
+                type="password"
+                value={confirmPasswordDraft}
+              />
+            </>
+          ) : null}
+
+          <button className="solid-button auth-submit-button" disabled={authBusy} type="submit">
+            {authBusy ? 'Working…' : submitLabel}
+          </button>
+
+          <p className="auth-feedback" role="status">
+            {authError}
+          </p>
+        </form>
+      </section>
+    </main>
   );
 }
 
@@ -307,6 +476,16 @@ export default function App() {
   const [savingAlias, setSavingAlias] = useState(false);
   const [deletingAlias, setDeletingAlias] = useState(false);
   const [registeringRepo, setRegisteringRepo] = useState(false);
+  const [authReady, setAuthReady] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState('');
+  const [authMode, setAuthMode] = useState('login');
+  const [authUser, setAuthUser] = useState(null);
+  const [registrationOpen, setRegistrationOpen] = useState(false);
+  const [hasUsers, setHasUsers] = useState(true);
+  const [usernameDraft, setUsernameDraft] = useState('');
+  const [passwordDraft, setPasswordDraft] = useState('');
+  const [confirmPasswordDraft, setConfirmPasswordDraft] = useState('');
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     if (typeof window === 'undefined') {
       return DEFAULT_SIDEBAR_WIDTH;
@@ -333,6 +512,81 @@ export default function App() {
   const resizeCleanupRef = useRef(null);
 
   const missingServerUrl = SERVER_URL === '';
+  const isAuthenticated = authUser !== null;
+
+  function resetWorkspaceState() {
+    setTree(null);
+    setStatus(null);
+    setSelectedPath(null);
+    setContent('');
+    setLoadingFile(false);
+    setLoadingTree(false);
+    setRepoError('');
+    setSaveError('');
+    setRepoAliases([]);
+    setActiveRepoAlias('');
+    setRepoAliasDraft('');
+    setRepoDraft('');
+    setPublicKey('');
+    setCopyStatus('');
+    setEditingAlias('');
+    setEditingRepoDraft('');
+
+    if (flushTimerRef.current) {
+      window.clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+
+    pendingWriteRef.current = null;
+  }
+
+  async function loadSessionState() {
+    const data = await fetchJson('/api/auth/session');
+
+    setHasUsers(Boolean(data.hasUsers));
+    setRegistrationOpen(Boolean(data.registrationOpen));
+    setAuthUser(data.user ?? null);
+    setAuthReady(true);
+
+    if (data.user) {
+      setAuthError('');
+      return data;
+    }
+
+    setStoredSessionToken('');
+
+    setAuthMode((currentMode) => {
+      if (!data.hasUsers) {
+        return 'register';
+      }
+
+      if (!data.registrationOpen && currentMode === 'register') {
+        return 'login';
+      }
+
+      return currentMode;
+    });
+
+    return data;
+  }
+
+  function handleUnauthorized(error, message = 'Your session expired. Sign in again.') {
+    if (!(error instanceof ApiError) || error.status !== 401) {
+      return false;
+    }
+
+    setStoredSessionToken('');
+    resetWorkspaceState();
+    setAuthUser(null);
+    setAuthReady(true);
+    setAuthError(message);
+
+    loadSessionState().catch((sessionError) => {
+      setAppError(sessionError.message);
+    });
+
+    return true;
+  }
 
   useEffect(() => {
     statusRef.current = status;
@@ -389,19 +643,23 @@ export default function App() {
 
     try {
       const data = await fetchJson('/api/file', {
-        method: 'PUT',
         body: JSON.stringify({
-          repoAlias: pendingWrite.repoAlias,
-          path: pendingWrite.path,
           content: pendingWrite.content,
+          path: pendingWrite.path,
+          repoAlias: pendingWrite.repoAlias,
         }),
         keepalive,
+        method: 'PUT',
       });
 
       if (pendingWrite.sequence === writeSequenceRef.current) {
         setStatus(data.status);
       }
     } catch (error) {
+      if (handleUnauthorized(error)) {
+        return;
+      }
+
       pendingWriteRef.current = pendingWrite;
       setSaveError(error.message);
       throw error;
@@ -450,7 +708,11 @@ export default function App() {
       throw new Error('A name is required.');
     }
 
-    if (normalizedValue === '.' || normalizedValue === '..' || PATH_SEPARATOR_PATTERN.test(normalizedValue)) {
+    if (
+      normalizedValue === '.' ||
+      normalizedValue === '..' ||
+      PATH_SEPARATOR_PATTERN.test(normalizedValue)
+    ) {
       throw new Error('Only a simple name is allowed. Do not include path separators.');
     }
 
@@ -458,12 +720,20 @@ export default function App() {
   }
 
   async function loadRepoAliases() {
-    const data = await fetchJson('/api/repos');
-    const aliases = data.repoAliases ?? [];
+    try {
+      const data = await fetchJson('/api/repos');
+      const aliases = data.repoAliases ?? [];
 
-    setRepoAliases(aliases);
+      setRepoAliases(aliases);
 
-    return aliases;
+      return aliases;
+    } catch (error) {
+      if (handleUnauthorized(error)) {
+        return [];
+      }
+
+      throw error;
+    }
   }
 
   useEffect(() => {
@@ -483,6 +753,10 @@ export default function App() {
       const data = await fetchJson(`/api/repos/${encodeURIComponent(repoAlias)}/public-key`);
       setPublicKey(data.publicKey);
     } catch (error) {
+      if (handleUnauthorized(error)) {
+        return;
+      }
+
       setPublicKey('');
       setRepoError(error.message);
     }
@@ -500,6 +774,10 @@ export default function App() {
       setEditingAlias(data.repoAlias);
       setEditingRepoDraft(data.repo);
     } catch (error) {
+      if (handleUnauthorized(error)) {
+        return;
+      }
+
       setRepoError(error.message);
     }
   }
@@ -520,6 +798,10 @@ export default function App() {
       setContent(data.content);
       setSelectedPath(path);
     } catch (error) {
+      if (handleUnauthorized(error)) {
+        return;
+      }
+
       setSaveError(error.message);
     } finally {
       setLoadingFile(false);
@@ -560,7 +842,6 @@ export default function App() {
       const hasPendingWriteForActiveFile =
         pendingWriteRef.current?.repoAlias === repoAlias &&
         pendingWriteRef.current?.path === activePath;
-
       const stateChanged = data.status.stateVersion !== statusRef.current?.stateVersion;
 
       if (
@@ -574,6 +855,10 @@ export default function App() {
         setContent('');
       }
     } catch (error) {
+      if (handleUnauthorized(error)) {
+        return;
+      }
+
       setRepoError(error.message);
     } finally {
       setLoadingTree(false);
@@ -604,10 +889,10 @@ export default function App() {
 
     try {
       const data = await fetchJson('/api/refresh', {
-        method: 'POST',
         body: JSON.stringify({
           repoAlias,
         }),
+        method: 'POST',
       });
 
       setRepoError('');
@@ -629,6 +914,10 @@ export default function App() {
         await loadFile(activePath, repoAlias);
       }
     } catch (error) {
+      if (handleUnauthorized(error)) {
+        return;
+      }
+
       setRepoError(error.message);
     } finally {
       setLoadingTree(false);
@@ -643,13 +932,26 @@ export default function App() {
       return;
     }
 
-    loadRepoAliases().catch((error) => {
+    setAppError('');
+    loadSessionState().catch((error) => {
       setAppError(error.message);
+      setAuthReady(true);
     });
   }, [missingServerUrl]);
 
   useEffect(() => {
-    if (missingServerUrl || !activeRepoAlias) {
+    if (!isAuthenticated) {
+      resetWorkspaceState();
+      return;
+    }
+
+    loadRepoAliases().catch((error) => {
+      setAppError(error.message);
+    });
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !activeRepoAlias) {
       setTree(null);
       setStatus(null);
       setSelectedPath(null);
@@ -665,23 +967,23 @@ export default function App() {
     }, 3_000);
 
     return () => window.clearInterval(interval);
-  }, [activeRepoAlias, missingServerUrl]);
+  }, [activeRepoAlias, isAuthenticated]);
 
   useEffect(() => {
-    if (missingServerUrl || activeSidebarTab !== 'aliases') {
+    if (!isAuthenticated || activeSidebarTab !== 'aliases') {
       return;
     }
 
     loadRepoAliasDetails(editingAlias || activeRepoAlias);
-  }, [activeRepoAlias, activeSidebarTab, editingAlias, missingServerUrl]);
+  }, [activeRepoAlias, activeSidebarTab, editingAlias, isAuthenticated]);
 
   useEffect(() => {
-    if (missingServerUrl || activeSidebarTab !== 'aliases') {
+    if (!isAuthenticated || activeSidebarTab !== 'aliases') {
       return;
     }
 
     loadPublicKey(editingAlias || activeRepoAlias);
-  }, [activeRepoAlias, activeSidebarTab, editingAlias, missingServerUrl]);
+  }, [activeRepoAlias, activeSidebarTab, editingAlias, isAuthenticated]);
 
   useEffect(() => {
     function flushForLifecycle() {
@@ -799,11 +1101,11 @@ export default function App() {
 
     try {
       const data = await fetchJson('/api/repos', {
-        method: 'POST',
         body: JSON.stringify({
-          repoAlias: repoAliasDraft.trim(),
           repo: repoDraft.trim(),
+          repoAlias: repoAliasDraft.trim(),
         }),
+        method: 'POST',
       });
 
       setPublicKey(data.publicKey);
@@ -813,9 +1115,12 @@ export default function App() {
       navigateToRepoAlias(data.repoAlias);
       setEditingAlias(data.repoAlias);
       setEditingRepoDraft(data.repo);
-      setPublicKey('');
       setActiveSidebarTab('aliases');
     } catch (error) {
+      if (handleUnauthorized(error)) {
+        return;
+      }
+
       setRepoError(error.message);
     } finally {
       setRegisteringRepo(false);
@@ -838,17 +1143,21 @@ export default function App() {
 
       const nextPath = parentPath ? `${parentPath}/${nextName}` : nextName;
       const data = await fetchJson('/api/files', {
-        method: 'POST',
         body: JSON.stringify({
-          repoAlias: activeRepoAliasRef.current,
           path: nextPath,
+          repoAlias: activeRepoAliasRef.current,
         }),
+        method: 'POST',
       });
 
       setStatus(data.status);
       setTree(data.tree);
       await loadFile(nextPath, activeRepoAliasRef.current);
     } catch (error) {
+      if (handleUnauthorized(error)) {
+        return;
+      }
+
       setSaveError(error.message);
     }
   }
@@ -868,22 +1177,26 @@ export default function App() {
       }
 
       const data = await fetchJson('/api/folders', {
-        method: 'POST',
         body: JSON.stringify({
-          repoAlias: activeRepoAliasRef.current,
-          parentPath,
           name: nextName,
+          parentPath,
+          repoAlias: activeRepoAliasRef.current,
         }),
+        method: 'POST',
       });
 
       setStatus(data.status);
       setTree(data.tree);
     } catch (error) {
+      if (handleUnauthorized(error)) {
+        return;
+      }
+
       setSaveError(error.message);
     }
   }
 
-  async function handleDeleteFolder(folderPath, folderName) {
+  async function handleDeleteFolder(folderPath) {
     if (!activeRepoAliasRef.current) {
       return;
     }
@@ -892,16 +1205,20 @@ export default function App() {
 
     try {
       const data = await fetchJson('/api/folders', {
-        method: 'DELETE',
         body: JSON.stringify({
-          repoAlias: activeRepoAliasRef.current,
           path: folderPath,
+          repoAlias: activeRepoAliasRef.current,
         }),
+        method: 'DELETE',
       });
 
       setStatus(data.status);
       setTree(data.tree);
     } catch (error) {
+      if (handleUnauthorized(error)) {
+        return;
+      }
+
       setSaveError(error.message);
     }
   }
@@ -927,17 +1244,22 @@ export default function App() {
 
     try {
       const data = await fetchJson(`/api/repos/${encodeURIComponent(editingAlias)}`, {
-        method: 'PUT',
         body: JSON.stringify({
           repo: editingRepoDraft.trim(),
         }),
+        method: 'PUT',
       });
 
       setEditingRepoDraft(data.repo);
+
       if (activeRepoAlias === data.repoAlias) {
         await loadState({ forceReloadFile: true, repoAlias: data.repoAlias });
       }
     } catch (error) {
+      if (handleUnauthorized(error)) {
+        return;
+      }
+
       setRepoError(error.message);
     } finally {
       setSavingAlias(false);
@@ -996,6 +1318,10 @@ export default function App() {
         setPublicKey('');
       }
     } catch (error) {
+      if (handleUnauthorized(error)) {
+        return;
+      }
+
       setRepoError(error.message);
     } finally {
       setDeletingAlias(false);
@@ -1012,10 +1338,10 @@ export default function App() {
 
     try {
       const data = await fetchJson('/api/sync', {
-        method: 'POST',
         body: JSON.stringify({
           repoAlias: activeRepoAliasRef.current,
         }),
+        method: 'POST',
       });
 
       setStatus(data.status);
@@ -1030,11 +1356,15 @@ export default function App() {
         await loadFile(activePath, activeRepoAliasRef.current);
       }
     } catch (error) {
+      if (handleUnauthorized(error)) {
+        return;
+      }
+
       setSaveError(error.message);
     }
   }
 
-  async function handleEditorChange(event) {
+  function handleEditorChange(event) {
     const nextContent = event.target.value;
     const activePath = selectedPathRef.current;
 
@@ -1062,6 +1392,65 @@ export default function App() {
         : currentStatus,
     );
     schedulePendingWrite();
+  }
+
+  async function handleAuthSubmit(event) {
+    event.preventDefault();
+
+    setAuthBusy(true);
+    setAuthError('');
+
+    try {
+      if (authMode === 'register' && passwordDraft !== confirmPasswordDraft) {
+        throw new Error('Passwords do not match.');
+      }
+
+      const endpoint = authMode === 'register' ? '/api/auth/register' : '/api/auth/login';
+      const data = await fetchJson(endpoint, {
+        body: JSON.stringify({
+          password: passwordDraft,
+          username: usernameDraft,
+        }),
+        headers: {
+          'X-Session-Transport': 'token',
+        },
+        method: 'POST',
+      });
+
+      setStoredSessionToken(data.sessionToken ?? '');
+      setAuthUser(data.user);
+      setAuthReady(true);
+      setAuthError('');
+      setUsernameDraft('');
+      setPasswordDraft('');
+      setConfirmPasswordDraft('');
+      await loadSessionState();
+    } catch (error) {
+      setAuthError(error.message);
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function handleLogout() {
+    try {
+      await flushPendingWrite();
+    } catch {}
+
+    try {
+      await fetchJson('/api/auth/logout', {
+        method: 'POST',
+      });
+    } catch {}
+
+    setStoredSessionToken('');
+    resetWorkspaceState();
+    setAuthUser(null);
+    setAuthReady(true);
+    setAuthError('');
+    await loadSessionState().catch((error) => {
+      setAppError(error.message);
+    });
   }
 
   const title = useMemo(() => {
@@ -1097,6 +1486,39 @@ export default function App() {
     );
   }
 
+  if (!authReady) {
+    return (
+      <main className="app-shell">
+        <section className="error-panel">
+          <p className="eyebrow">Connecting</p>
+          <h1>GitHub Note Sync</h1>
+          <p>Checking the server session and authentication policy…</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <AuthScreen
+        authBusy={authBusy}
+        authError={authError}
+        authMode={authMode}
+        confirmPasswordDraft={confirmPasswordDraft}
+        hasUsers={hasUsers}
+        onModeChange={setAuthMode}
+        onSubmit={handleAuthSubmit}
+        passwordDraft={passwordDraft}
+        registrationOpen={registrationOpen}
+        serverUrl={SERVER_URL}
+        setConfirmPasswordDraft={setConfirmPasswordDraft}
+        setPasswordDraft={setPasswordDraft}
+        setUsernameDraft={setUsernameDraft}
+        usernameDraft={usernameDraft}
+      />
+    );
+  }
+
   return (
     <main className="app-shell">
       <section className="workspace" ref={workspaceRef} style={workspaceStyle}>
@@ -1107,6 +1529,7 @@ export default function App() {
               <h1>{title}</h1>
             </div>
             <div className="header-actions">
+              <span className="user-badge">{authUser.username}</span>
               <SyncBadge status={status} />
               <button
                 className="ghost-button"
@@ -1115,6 +1538,9 @@ export default function App() {
                 type="button"
               >
                 Sync now
+              </button>
+              <button className="ghost-button" onClick={handleLogout} type="button">
+                Log out
               </button>
             </div>
           </header>
@@ -1129,19 +1555,17 @@ export default function App() {
           </div>
 
           <section className="editor-surface">
-            {!activeRepoAlias ? (
-              null
-            ) : repoError ? (
+            {!activeRepoAlias ? null : repoError ? (
               <div className="empty-state">{repoError}</div>
             ) : loadingTree ? (
               <div className="empty-state">Loading repository structure…</div>
             ) : selectedPath ? (
               <textarea
                 className="editor-textarea"
-                onChange={handleEditorChange}
                 onBlur={() => {
                   flushPendingWrite().catch(() => {});
                 }}
+                onChange={handleEditorChange}
                 spellCheck={false}
                 value={content}
               />
@@ -1174,7 +1598,7 @@ export default function App() {
             </div>
           </header>
 
-          <div className="tab-row" role="tablist" aria-label="Repository actions">
+          <div aria-label="Repository actions" className="tab-row" role="tablist">
             <button
               aria-selected={activeSidebarTab === 'select'}
               className={`tab-button ${activeSidebarTab === 'select' ? 'tab-button-active' : ''}`}
@@ -1185,7 +1609,7 @@ export default function App() {
               Write
             </button>
             <button
-              aria-selected={activeSidebarTab === 'create'}
+              aria-selected={activeSidebarTab === 'aliases'}
               className={`tab-button ${activeSidebarTab === 'aliases' ? 'tab-button-active' : ''}`}
               onClick={() => setActiveSidebarTab('aliases')}
               role="tab"
@@ -1292,7 +1716,7 @@ export default function App() {
                       }
                       type="button"
                     >
-                      <span className="copy-icon" aria-hidden="true">
+                      <span aria-hidden="true" className="copy-icon">
                         <span className="copy-icon-back" />
                         <span className="copy-icon-front" />
                       </span>
@@ -1300,7 +1724,9 @@ export default function App() {
                   </div>
                   <div className="key-block-shell key-block-shell-inline">
                     <pre className="key-block">
-                      {editingAlias ? publicKey || 'Loading public key…' : 'Select an alias to view its public key.'}
+                      {editingAlias
+                        ? publicKey || 'Loading public key…'
+                        : 'Select an alias to view its public key.'}
                     </pre>
                   </div>
                   <p className="key-copy key-copy-inline">
@@ -1358,10 +1784,10 @@ export default function App() {
               <div className="empty-state">Loading repository structure…</div>
             ) : activeSidebarTab === 'select' && activeRepoAlias ? (
               <div className="empty-state">No files loaded for this repo alias yet.</div>
-            ) : activeSidebarTab === 'select' ? (
-              null
-            ) : activeSidebarTab === 'aliases' ? (
-              <div className="empty-state">Create new aliases or edit the repo URL for an existing alias.</div>
+            ) : activeSidebarTab === 'select' ? null : activeSidebarTab === 'aliases' ? (
+              <div className="empty-state">
+                Create new aliases or edit the repo URL for an existing alias.
+              </div>
             ) : (
               <div className="empty-state">Create a repo alias to generate its SSH keypair.</div>
             )}

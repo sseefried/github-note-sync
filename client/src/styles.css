@@ -42,6 +42,11 @@ select {
   padding: 24px;
 }
 
+.auth-shell {
+  display: grid;
+  place-items: center;
+}
+
 .workspace {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 12px var(--sidebar-width, 360px);
@@ -63,6 +68,67 @@ select {
   background: rgba(255, 250, 244, 0.86);
   display: flex;
   flex-direction: column;
+}
+
+.auth-panel {
+  width: min(980px, 100%);
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 420px);
+  gap: 24px;
+  padding: 24px;
+  border: 1px solid rgba(22, 30, 43, 0.12);
+  border-radius: 28px;
+  background: rgba(255, 250, 244, 0.9);
+  box-shadow: 0 18px 45px rgba(36, 42, 54, 0.12);
+}
+
+.auth-copy {
+  padding: 18px 12px;
+  color: rgba(32, 35, 41, 0.82);
+}
+
+.auth-copy h1 {
+  margin: 4px 0 14px;
+  font-family: "Iowan Old Style", "Palatino Linotype", serif;
+  font-size: clamp(1.9rem, 4vw, 3.2rem);
+  line-height: 0.98;
+}
+
+.auth-copy p {
+  max-width: 42ch;
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  border-radius: 24px;
+  background: rgba(23, 29, 40, 0.94);
+  color: #eef2f7;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.auth-mode-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.auth-mode-button {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  padding: 10px 12px;
+}
+
+.auth-mode-button-active {
+  background: rgba(245, 194, 126, 0.18);
+  border-color: rgba(245, 194, 126, 0.35);
 }
 
 .tree-pane {
@@ -147,6 +213,17 @@ select {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.user-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(24, 31, 44, 0.12);
+  border-radius: 999px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.66);
+  color: rgba(24, 31, 44, 0.84);
+  font-size: 0.88rem;
 }
 
 .status-row,
@@ -253,6 +330,10 @@ select {
   text-transform: uppercase;
 }
 
+.field-label-light {
+  color: rgba(255, 250, 244, 0.78);
+}
+
 .field-input {
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 14px;
@@ -264,6 +345,36 @@ select {
 
 .field-input::placeholder {
   color: rgba(238, 242, 247, 0.45);
+}
+
+.auth-input {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  padding: 12px 14px;
+  outline: none;
+}
+
+.auth-input::placeholder {
+  color: rgba(238, 242, 247, 0.45);
+}
+
+.auth-input:focus {
+  border-color: rgba(245, 194, 126, 0.4);
+  box-shadow: 0 0 0 4px rgba(245, 194, 126, 0.08);
+}
+
+.auth-submit-button {
+  margin-top: 8px;
+}
+
+.auth-feedback {
+  min-height: 1.4rem;
+  margin: 0;
+  color: rgba(255, 226, 221, 0.92);
+  font-size: 0.9rem;
 }
 
 .repo-help-copy {
@@ -584,6 +695,11 @@ code {
 @media (max-width: 900px) {
   .app-shell {
     padding: 12px;
+  }
+
+  .auth-panel {
+    grid-template-columns: 1fr;
+    padding: 18px;
   }
 
   .workspace {

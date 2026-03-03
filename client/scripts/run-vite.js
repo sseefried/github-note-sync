@@ -3,34 +3,34 @@ import { spawn } from 'node:child_process';
 const mode = process.argv[2];
 const cliArgs = process.argv.slice(3);
 
-function extractServerUrl(args) {
+function extractRuntimeOptions(args) {
+  let serverUrl = '';
+  const remainingArgs = [];
+
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
 
     if (arg.startsWith('--server-url=')) {
-      return {
-        serverUrl: arg.slice('--server-url='.length),
-        remainingArgs: args.filter((_, currentIndex) => currentIndex !== index),
-      };
+      serverUrl = arg.slice('--server-url='.length);
+      continue;
     }
 
     if (arg === '--server-url') {
-      return {
-        serverUrl: args[index + 1] ?? '',
-        remainingArgs: args.filter(
-          (_, currentIndex) => currentIndex !== index && currentIndex !== index + 1,
-        ),
-      };
+      serverUrl = args[index + 1] ?? '';
+      index += 1;
+      continue;
     }
+
+    remainingArgs.push(arg);
   }
 
   return {
-    serverUrl: '',
-    remainingArgs: args,
+    serverUrl,
+    remainingArgs,
   };
 }
 
-const { serverUrl, remainingArgs } = extractServerUrl(cliArgs);
+const { serverUrl, remainingArgs } = extractRuntimeOptions(cliArgs);
 
 if (!serverUrl) {
   console.error(
