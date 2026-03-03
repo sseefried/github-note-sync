@@ -34,6 +34,8 @@ The client repository contains the authenticated web app: a login and repo-manag
 
 If `--server-url` is omitted, the client exits with a clear message explaining that it is required. If the server is configured to listen on a different port, use that port in `--server-url`.
 
+The Vite dev server and preview server still listen on HTTP internally, but the browser client now refuses to run unless the page itself is loaded over HTTPS. In practice, open the app through your reverse proxy rather than visiting the raw Vite URL directly.
+
 5. Open the client in the browser. Register a server user, or sign in with an existing server-owned username and password.
 6. The Register tab stays available by default so you can create multiple users. If the server is configured with `allowRegistration: false`, the Register tab disappears and only sign-in remains.
 7. Once signed in, create a repo alias by entering:
@@ -98,6 +100,8 @@ Use Caddy to terminate TLS locally while keeping both app servers on HTTP.
 
 6. Open the app at `https://notes.localhost`.
 
+Direct visits to `http://127.0.0.1:5173` or `http://localhost:5173` are expected to show an HTTPS-required screen.
+
 For this setup, the server repository should allow the browser origin:
 
 ```json
@@ -129,7 +133,7 @@ The client service uses `vite preview`, so the systemd unit serves the prebuilt 
 
 ## Architecture
 
-The client is a React app built with Vite. A thin CLI wrapper requires `--server-url=<url>` and injects that value into the build/runtime environment so the UI can call the separate API. The client itself stays HTTP-only at the app-server level; if you want HTTPS locally or in production, terminate TLS in an external reverse proxy so the transport model matches production instead of embedding certificate handling into the app. In local HTTPS testing, a proxy such as Caddy sits in front of both the Vite dev server and the API server and exposes stable HTTPS origins like `https://notes.localhost` and `https://api.notes.localhost`. On startup the browser first checks `/api/auth/session` and treats the server session as the source of truth for whether the editor can load at all. Until the user is authenticated, the UI stays on a dedicated auth screen that can register the first user, log in, and log out while keeping the password authority entirely on the server. This browser client explicitly requests a bearer session token from the server and stores it in `sessionStorage`, which avoids cross-site cookie issues when the frontend and backend run on different hosts. Once authenticated, the browser still treats the URL path as the source of truth for the active repo alias, so direct links remain deep-linkable inside that user's alias namespace. When an alias is first activated from the URL, the client first force-refreshes against the remote repo and only then falls back to normal polling, with an explicit loading state while that first tree read is still in flight. It separates repo selection and alias management into tabs in the right pane, renders the repository tree in the write tab, exposes compact file and folder creation icons on every directory row, places a refresh action on the repo row, allows immediate deletion of folders that contain no files, lets the user drag a splitter to resize the sidebar, and exposes the selected alias deploy key in a read-only copyable field with a direct GitHub setup link. All authenticated browser requests carry that bearer token, while non-browser clients can use the same authenticated API with their own bearer session tokens.
+The client is a React app built with Vite. A thin CLI wrapper requires `--server-url=<url>` and injects that value into the build/runtime environment so the UI can call the separate API. The client itself stays HTTP-only at the app-server level; if you want HTTPS locally or in production, terminate TLS in an external reverse proxy so the transport model matches production instead of embedding certificate handling into the app. In local HTTPS testing, a proxy such as Caddy sits in front of both the Vite dev server and the API server and exposes stable HTTPS origins like `https://notes.localhost` and `https://api.notes.localhost`. A runtime guard refuses to boot the app unless the page was loaded over HTTPS, which means the raw Vite or preview URLs are intentionally unusable in a browser. On startup the browser first checks `/api/auth/session` and treats the server session as the source of truth for whether the editor can load at all. Until the user is authenticated, the UI stays on a dedicated auth screen that can register the first user, log in, and log out while keeping the password authority entirely on the server. This browser client explicitly requests a bearer session token from the server and stores it in `sessionStorage`, which avoids cross-site cookie issues when the frontend and backend run on different hosts. Once authenticated, the browser still treats the URL path as the source of truth for the active repo alias, so direct links remain deep-linkable inside that user's alias namespace. When an alias is first activated from the URL, the client first force-refreshes against the remote repo and only then falls back to normal polling, with an explicit loading state while that first tree read is still in flight. It separates repo selection and alias management into tabs in the right pane, renders the repository tree in the write tab, exposes compact file and folder creation icons on every directory row, places a refresh action on the repo row, allows immediate deletion of folders that contain no files, lets the user drag a splitter to resize the sidebar, and exposes the selected alias deploy key in a read-only copyable field with a direct GitHub setup link. All authenticated browser requests carry that bearer token, while non-browser clients can use the same authenticated API with their own bearer session tokens.
 
 Design philosophy:
 
@@ -142,4 +146,5 @@ Design philosophy:
 - Prefer a plain-text editing experience over heavy editor abstractions.
 - Keep deployment simple by building the client once and running it under a user systemd unit.
 - Keep TLS termination outside the app so local and production topology stay aligned.
+- Refuse to boot the browser app on non-HTTPS pages so the proxy requirement is visible immediately.
 - Surface configuration and authentication failures clearly at startup instead of failing silently.
