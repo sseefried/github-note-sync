@@ -88,10 +88,17 @@ function hasFileDescendant(node) {
   return (node.children ?? []).some((child) => hasFileDescendant(child));
 }
 
-function SyncBadge({ status }) {
+function SyncBadge({ compact = false, status }) {
   const label = status?.lastSyncStatus ?? 'starting';
+  const compactLabel = label === 'syncing' || label === 'starting' ? 'Syncing' : 'Idle';
+  const badgeLabel = compact ? compactLabel : label;
+  const badgeClassSuffix = compact ? compactLabel.toLowerCase() : label;
 
-  return <span className={`sync-badge sync-badge-${label}`}>{label}</span>;
+  return (
+    <span className={`sync-badge sync-badge-${badgeClassSuffix}${compact ? ' sync-badge-compact' : ''}`}>
+      {badgeLabel}
+    </span>
+  );
 }
 
 function clampSidebarWidth(width, containerWidth = Number.POSITIVE_INFINITY) {
@@ -114,6 +121,21 @@ function getRepoAliasFromLocation() {
   } catch {
     return '';
   }
+}
+
+function getMobileEditorTitle(path) {
+  if (typeof path !== 'string' || path.trim() === '') {
+    return 'No file';
+  }
+
+  const segments = path.split('/').filter(Boolean);
+  const fileName = segments.length > 0 ? segments[segments.length - 1] : path.trim();
+
+  if (fileName.length <= 20) {
+    return fileName;
+  }
+
+  return `${fileName.slice(0, 17)}...`;
 }
 
 function FilePlusIcon() {
@@ -490,6 +512,7 @@ export default function App() {
 
   const missingServerUrl = SERVER_URL === '';
   const isAuthenticated = authUser !== null;
+  const mobileLayout = isMobileLayout();
 
   function isMobileLayout() {
     if (typeof window === 'undefined') {
@@ -1329,42 +1352,6 @@ export default function App() {
     }
   }
 
-  async function handleSyncNow() {
-    if (!activeRepoAliasRef.current) {
-      return;
-    }
-
-    setSaveError('');
-    await flushPendingWrite();
-
-    try {
-      const data = await fetchJson('/api/sync', {
-        body: JSON.stringify({
-          repoAlias: activeRepoAliasRef.current,
-        }),
-        method: 'POST',
-      });
-
-      setStatus(data.status);
-      setTree(data.tree);
-
-      const activePath =
-        selectedPathRef.current && hasFilePath(data.tree, selectedPathRef.current)
-          ? selectedPathRef.current
-          : findFirstFile(data.tree);
-
-      if (activePath) {
-        await loadFile(activePath, activeRepoAliasRef.current);
-      }
-    } catch (error) {
-      if (handleUnauthorized(error)) {
-        return;
-      }
-
-      setSaveError(error.message);
-    }
-  }
-
   function handleEditorChange(event) {
     const nextContent = event.target.value;
     const activePath = selectedPathRef.current;
@@ -1459,6 +1446,7 @@ export default function App() {
 
   const repoSlug = status?.repo ?? '';
   const deployKeyUrl = repoSlug ? `https://github.com/${repoSlug}/settings/keys` : '';
+  const mobileEditorTitle = getMobileEditorTitle(selectedPath);
   const workspaceStyle = useMemo(
     () => ({
       '--sidebar-width': `${sidebarWidth}px`,
@@ -1519,37 +1507,35 @@ export default function App() {
     <main className="app-shell">
       <section className="workspace" ref={workspaceRef} style={workspaceStyle}>
         <section className="editor-pane" ref={editorPaneRef}>
-          <header className="pane-header">
-            <div className="editor-header-copy">
-              <button
-                aria-label="Go back to file tree"
-                className="editor-mobile-back"
-                onClick={scrollToFileTree}
-                type="button"
-              >
-                &lt;
-              </button>
-              <div>
-                <p className="eyebrow">Editor</p>
-                <h1>{title}</h1>
+          {mobileLayout ? (
+            <header className="pane-header pane-header-mobile-editor">
+              <div className="editor-header-copy editor-header-copy-mobile">
+                <button
+                  aria-label="Go back to file tree"
+                  className="editor-mobile-back"
+                  onClick={scrollToFileTree}
+                  type="button"
+                >
+                  &lt;
+                </button>
+                <h1>{mobileEditorTitle}</h1>
               </div>
-            </div>
-            <div className="header-actions">
-              <span className="user-badge">{authUser.username}</span>
-              <SyncBadge status={status} />
-              <button
-                className="ghost-button"
-                disabled={!activeRepoAlias || repoError !== ''}
-                onClick={handleSyncNow}
-                type="button"
-              >
-                Sync now
-              </button>
-              <button className="ghost-button" onClick={handleLogout} type="button">
-                Log out
-              </button>
-            </div>
-          </header>
+              <SyncBadge compact status={status} />
+            </header>
+          ) : (
+            <header className="pane-header">
+              <div className="editor-header-copy">
+                <div>
+                  <p className="eyebrow">Editor</p>
+                  <h1>{title}</h1>
+                </div>
+              </div>
+              <div className="header-actions">
+                <span className="user-badge">{authUser.username}</span>
+                <SyncBadge status={status} />
+              </div>
+            </header>
+          )}
 
           <div className="status-row">
             <span>
@@ -1601,6 +1587,11 @@ export default function App() {
             <div>
               <p className="eyebrow">Repository</p>
               <h2>Files</h2>
+            </div>
+            <div className="tree-header-actions">
+              <button className="ghost-button tree-logout-button" onClick={handleLogout} type="button">
+                Log out
+              </button>
             </div>
           </header>
 
