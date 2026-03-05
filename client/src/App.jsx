@@ -138,6 +138,17 @@ function getMobileEditorTitle(path) {
   return `${fileName.slice(0, 17)}...`;
 }
 
+function getViewportHeightPx() {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+  const normalizedHeight = Math.round(viewportHeight);
+
+  return Number.isFinite(normalizedHeight) && normalizedHeight > 0 ? normalizedHeight : null;
+}
+
 function FilePlusIcon() {
   return (
     <svg aria-hidden="true" className="tree-action-icon" viewBox="0 0 16 16">
@@ -497,6 +508,7 @@ export default function App() {
       ? clampSidebarWidth(storedWidth, window.innerWidth)
       : DEFAULT_SIDEBAR_WIDTH;
   });
+  const [viewportHeight, setViewportHeight] = useState(() => getViewportHeightPx());
 
   const workspaceRef = useRef(null);
   const editorPaneRef = useRef(null);
@@ -636,6 +648,30 @@ export default function App() {
 
     window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth));
   }, [sidebarWidth]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const syncViewportHeight = () => {
+      const nextHeight = getViewportHeightPx();
+      setViewportHeight((currentHeight) => (currentHeight === nextHeight ? currentHeight : nextHeight));
+    };
+
+    const visualViewport = window.visualViewport;
+
+    syncViewportHeight();
+    window.addEventListener('resize', syncViewportHeight);
+    visualViewport?.addEventListener('resize', syncViewportHeight);
+    visualViewport?.addEventListener('scroll', syncViewportHeight);
+
+    return () => {
+      window.removeEventListener('resize', syncViewportHeight);
+      visualViewport?.removeEventListener('resize', syncViewportHeight);
+      visualViewport?.removeEventListener('scroll', syncViewportHeight);
+    };
+  }, []);
 
   useEffect(() => {
     function handleWindowResize() {
@@ -1450,8 +1486,9 @@ export default function App() {
   const workspaceStyle = useMemo(
     () => ({
       '--sidebar-width': `${sidebarWidth}px`,
+      ...(viewportHeight ? { '--viewport-height': `${viewportHeight}px` } : {}),
     }),
-    [sidebarWidth],
+    [sidebarWidth, viewportHeight],
   );
 
   if (appError) {

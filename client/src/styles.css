@@ -38,8 +38,9 @@ select {
 }
 
 .app-shell {
-  min-height: 100vh;
-  padding: 24px;
+  --app-shell-padding: 24px;
+  min-height: var(--viewport-height, 100vh);
+  padding: var(--app-shell-padding);
 }
 
 .auth-shell {
@@ -51,7 +52,7 @@ select {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 12px var(--sidebar-width, 360px);
   gap: 0;
-  min-height: calc(100vh - 48px);
+  min-height: calc(var(--viewport-height, 100vh) - (var(--app-shell-padding) * 2));
 }
 
 .editor-pane,
@@ -68,6 +69,7 @@ select {
   background: rgba(255, 250, 244, 0.86);
   display: flex;
   flex-direction: column;
+  min-height: calc(var(--viewport-height, 100vh) - (var(--app-shell-padding) * 2));
 }
 
 .auth-panel {
@@ -735,7 +737,7 @@ code {
   }
 
   .app-shell {
-    padding: 12px;
+    --app-shell-padding: 12px;
   }
 
   .auth-panel {
