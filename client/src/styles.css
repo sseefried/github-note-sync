@@ -738,6 +738,8 @@ code {
 
   .app-shell {
     --app-shell-padding: 12px;
+    padding-inline: 0;
+    padding-block: var(--app-shell-padding);
   }
 
   .auth-panel {
@@ -748,6 +750,10 @@ code {
   .workspace {
     grid-template-columns: 1fr;
     gap: 14px;
+  }
+
+  .editor-surface {
+    padding-inline: 0;
   }
 
   .tree-pane {
