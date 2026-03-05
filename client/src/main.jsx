@@ -44,9 +44,27 @@ async function detectSecureContext() {
   }
 }
 
+function registerServiceWorker() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  if (!import.meta.env.PROD || !('serviceWorker' in navigator)) {
+    return;
+  }
+
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
+
 const root = ReactDOM.createRoot(document.getElementById('root'));
 
 detectSecureContext().then((isHttps) => {
+  if (isHttps) {
+    registerServiceWorker();
+  }
+
   root.render(
     <React.StrictMode>{isHttps ? <App /> : <HttpsRequiredScreen />}</React.StrictMode>,
   );
