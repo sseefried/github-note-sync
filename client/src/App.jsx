@@ -8,7 +8,8 @@ const MIN_SIDEBAR_WIDTH = 280;
 const MAX_SIDEBAR_WIDTH = 720;
 const MIN_EDITOR_WIDTH = 320;
 const SIDEBAR_WIDTH_STORAGE_KEY = 'github-note-sync.sidebar-width';
-const MOBILE_LAYOUT_QUERY = '(max-width: 900px)';
+const MOBILE_LAYOUT_QUERY =
+  '(max-width: 900px), ((max-width: 1024px) and (hover: none) and (pointer: coarse))';
 
 class ApiError extends Error {
   constructor(message, status) {

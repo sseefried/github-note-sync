@@ -712,7 +712,7 @@ code {
   font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 900px), ((max-width: 1024px) and (hover: none) and (pointer: coarse)) {
   html {
     font-size: 18px;
   }
