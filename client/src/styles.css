@@ -179,6 +179,26 @@ select {
   padding: 24px 24px 16px;
 }
 
+.editor-header-copy {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.editor-mobile-back {
+  display: none;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid rgba(24, 31, 44, 0.16);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.74);
+  color: rgba(24, 31, 44, 0.9);
+  font-size: 1.1rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
 .pane-header h1,
 .pane-header h2,
 .error-panel h1 {
@@ -693,6 +713,10 @@ code {
 }
 
 @media (max-width: 900px) {
+  html {
+    font-size: 18px;
+  }
+
   .app-shell {
     padding: 12px;
   }
@@ -704,12 +728,12 @@ code {
 
   .workspace {
     grid-template-columns: 1fr;
-    gap: 18px;
+    gap: 14px;
   }
 
   .tree-pane {
     order: -1;
-    min-height: 320px;
+    min-height: 280px;
   }
 
   .pane-resizer {
@@ -730,5 +754,54 @@ code {
 
   .repo-form-actions {
     flex-direction: column;
+  }
+
+  .editor-mobile-back {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+  }
+
+  .pane-header h1 {
+    font-size: clamp(1.85rem, 6.5vw, 2.4rem);
+  }
+
+  .pane-header h2 {
+    font-size: 1.75rem;
+  }
+
+  .eyebrow,
+  .field-label {
+    font-size: 0.84rem;
+  }
+
+  .status-row,
+  .footer-row,
+  .tree-meta {
+    font-size: 0.94rem;
+  }
+
+  .tree-directory,
+  .tree-file,
+  .tab-button,
+  .field-input,
+  .auth-input,
+  .ghost-button,
+  .solid-button,
+  .danger-button,
+  .sync-badge {
+    font-size: 0.96rem;
+  }
+
+  .tree-action-button {
+    width: 30px;
+    height: 30px;
+  }
+
+  .editor-textarea {
+    font-size: 1.02rem;
+    line-height: 1.72;
+    padding: 18px;
   }
 }

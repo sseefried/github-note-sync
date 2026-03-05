@@ -8,7 +8,7 @@ const MIN_SIDEBAR_WIDTH = 280;
 const MAX_SIDEBAR_WIDTH = 720;
 const MIN_EDITOR_WIDTH = 320;
 const SIDEBAR_WIDTH_STORAGE_KEY = 'github-note-sync.sidebar-width';
-const SESSION_TOKEN_STORAGE_KEY = 'github-note-sync.session-token';
+const MOBILE_LAYOUT_QUERY = '(max-width: 900px)';
 
 class ApiError extends Error {
   constructor(message, status) {
@@ -20,14 +20,9 @@ class ApiError extends Error {
 
 async function fetchJson(url, options = {}) {
   const headers = new Headers(options.headers ?? {});
-  const sessionToken = getStoredSessionToken();
 
   if (options.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
-  }
-
-  if (sessionToken && !headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${sessionToken}`);
   }
 
   const response = await fetch(`${SERVER_URL}${url}`, {
@@ -46,27 +41,6 @@ async function fetchJson(url, options = {}) {
   }
 
   return data;
-}
-
-function getStoredSessionToken() {
-  if (typeof window === 'undefined') {
-    return '';
-  }
-
-  return window.sessionStorage.getItem(SESSION_TOKEN_STORAGE_KEY) ?? '';
-}
-
-function setStoredSessionToken(sessionToken) {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  if (typeof sessionToken === 'string' && sessionToken.trim() !== '') {
-    window.sessionStorage.setItem(SESSION_TOKEN_STORAGE_KEY, sessionToken.trim());
-    return;
-  }
-
-  window.sessionStorage.removeItem(SESSION_TOKEN_STORAGE_KEY);
 }
 
 function findFirstFile(node) {
@@ -502,6 +476,8 @@ export default function App() {
   });
 
   const workspaceRef = useRef(null);
+  const editorPaneRef = useRef(null);
+  const treePaneRef = useRef(null);
   const statusRef = useRef(null);
   const selectedPathRef = useRef(null);
   const activeRepoAliasRef = useRef('');
@@ -513,6 +489,29 @@ export default function App() {
 
   const missingServerUrl = SERVER_URL === '';
   const isAuthenticated = authUser !== null;
+
+  function isMobileLayout() {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+
+    return window.matchMedia(MOBILE_LAYOUT_QUERY).matches;
+  }
+
+  function scrollToEditorPane() {
+    editorPaneRef.current?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start',
+    });
+  }
+
+  function scrollToFileTree() {
+    setActiveSidebarTab('select');
+    treePaneRef.current?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start',
+    });
+  }
 
   function resetWorkspaceState() {
     setTree(null);
@@ -553,8 +552,6 @@ export default function App() {
       return data;
     }
 
-    setStoredSessionToken('');
-
     setAuthMode((currentMode) => {
       if (!data.hasUsers) {
         return 'register';
@@ -575,7 +572,6 @@ export default function App() {
       return false;
     }
 
-    setStoredSessionToken('');
     resetWorkspaceState();
     setAuthUser(null);
     setAuthReady(true);
@@ -1025,7 +1021,7 @@ export default function App() {
   }
 
   function handleResizeStart(event) {
-    if (window.matchMedia('(max-width: 900px)').matches) {
+    if (window.matchMedia(MOBILE_LAYOUT_QUERY).matches) {
       return;
     }
 
@@ -1065,6 +1061,10 @@ export default function App() {
   async function handleFileSelect(path) {
     await flushPendingWrite();
     await loadFile(path, activeRepoAliasRef.current);
+
+    if (isMobileLayout()) {
+      scrollToEditorPane();
+    }
   }
 
   async function handleRepoAliasChange(event) {
@@ -1411,13 +1411,9 @@ export default function App() {
           password: passwordDraft,
           username: usernameDraft,
         }),
-        headers: {
-          'X-Session-Transport': 'token',
-        },
         method: 'POST',
       });
 
-      setStoredSessionToken(data.sessionToken ?? '');
       setAuthUser(data.user);
       setAuthReady(true);
       setAuthError('');
@@ -1443,7 +1439,6 @@ export default function App() {
       });
     } catch {}
 
-    setStoredSessionToken('');
     resetWorkspaceState();
     setAuthUser(null);
     setAuthReady(true);
@@ -1522,11 +1517,21 @@ export default function App() {
   return (
     <main className="app-shell">
       <section className="workspace" ref={workspaceRef} style={workspaceStyle}>
-        <section className="editor-pane">
+        <section className="editor-pane" ref={editorPaneRef}>
           <header className="pane-header">
-            <div>
-              <p className="eyebrow">Editor</p>
-              <h1>{title}</h1>
+            <div className="editor-header-copy">
+              <button
+                aria-label="Go back to file tree"
+                className="editor-mobile-back"
+                onClick={scrollToFileTree}
+                type="button"
+              >
+                &lt;
+              </button>
+              <div>
+                <p className="eyebrow">Editor</p>
+                <h1>{title}</h1>
+              </div>
             </div>
             <div className="header-actions">
               <span className="user-badge">{authUser.username}</span>
@@ -1590,7 +1595,7 @@ export default function App() {
           tabIndex={0}
         />
 
-        <aside className="tree-pane">
+        <aside className="tree-pane" ref={treePaneRef}>
           <header className="pane-header pane-header-sidebar">
             <div>
               <p className="eyebrow">Repository</p>
