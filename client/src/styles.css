@@ -628,13 +628,20 @@ select {
 }
 
 .sync-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 104px;
+  font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
 
 .sync-badge-compact {
+  width: 78px;
   padding: 7px 10px;
-  font-size: 0.72rem;
+  font-size: 0.66rem;
   letter-spacing: 0.04em;
 }
 
@@ -978,9 +985,16 @@ code {
   .auth-input,
   .ghost-button,
   .solid-button,
-  .danger-button,
-  .sync-badge {
+  .danger-button {
     font-size: 0.96rem;
+  }
+
+  .sync-badge {
+    font-size: 0.76rem;
+  }
+
+  .sync-badge-compact {
+    font-size: 0.64rem;
   }
 
   .tree-action-button {
