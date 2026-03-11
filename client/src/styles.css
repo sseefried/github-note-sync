@@ -963,6 +963,11 @@ code {
     font-size: clamp(1.85rem, 6.5vw, 2.4rem);
   }
 
+  .pane-header-mobile-editor .editor-header-copy-mobile h1 {
+    font-size: 0.82rem;
+    line-height: 1.15;
+  }
+
   .pane-header h2 {
     font-size: 1.75rem;
   }
