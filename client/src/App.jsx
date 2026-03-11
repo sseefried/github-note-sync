@@ -1606,7 +1606,7 @@ export default function App() {
                     title={markdownPreviewActive ? 'Edit markdown source' : 'Preview rendered markdown'}
                     type="button"
                   >
-                    {markdownPreviewActive ? '<>' : '#'}
+                    {markdownPreviewActive ? '#' : '<>'}
                   </button>
                 ) : null}
                 <h1>{mobileEditorTitle}</h1>
@@ -1632,7 +1632,7 @@ export default function App() {
                     title={markdownPreviewActive ? 'Edit markdown source' : 'Preview rendered markdown'}
                     type="button"
                   >
-                    {markdownPreviewActive ? '<>' : '#'}
+                    {markdownPreviewActive ? '#' : '<>'}
                   </button>
                 ) : null}
                 <span className="user-badge">{authUser.username}</span>
