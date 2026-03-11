@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import CodeMirror from '@uiw/react-codemirror';
 import { markdown } from '@codemirror/lang-markdown';
 import { EditorView } from '@codemirror/view';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 const SERVER_URL = (import.meta.env.VITE_SERVER_URL ?? '').trim().replace(/\/$/, '');
 const CLIENT_WRITE_DEBOUNCE_MS = 3_000;
@@ -497,6 +499,7 @@ export default function App() {
   const [usernameDraft, setUsernameDraft] = useState('');
   const [passwordDraft, setPasswordDraft] = useState('');
   const [confirmPasswordDraft, setConfirmPasswordDraft] = useState('');
+  const [showMarkdownPreview, setShowMarkdownPreview] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     if (typeof window === 'undefined') {
       return DEFAULT_SIDEBAR_WIDTH;
@@ -569,6 +572,7 @@ export default function App() {
     setCopyStatus('');
     setEditingAlias('');
     setEditingRepoDraft('');
+    setShowMarkdownPreview(false);
 
     if (flushTimerRef.current) {
       window.clearTimeout(flushTimerRef.current);
@@ -1493,6 +1497,13 @@ export default function App() {
     return selectedPath.toLowerCase().endsWith('.md');
   }, [selectedPath]);
   const markdownEditorExtensions = useMemo(() => [markdown(), EditorView.lineWrapping], []);
+  const markdownPreviewActive = isMarkdownFile && showMarkdownPreview;
+
+  useEffect(() => {
+    if (!isMarkdownFile && showMarkdownPreview) {
+      setShowMarkdownPreview(false);
+    }
+  }, [isMarkdownFile, showMarkdownPreview]);
 
   const repoSlug = status?.repo ?? '';
   const deployKeyUrl = repoSlug ? `https://github.com/${repoSlug}/settings/keys` : '';
@@ -1569,6 +1580,19 @@ export default function App() {
                 >
                   &lt;
                 </button>
+                {isMarkdownFile ? (
+                  <button
+                    aria-label={markdownPreviewActive ? 'Show markdown editor' : 'Show markdown preview'}
+                    className="editor-mobile-toggle"
+                    onClick={() => {
+                      setShowMarkdownPreview((current) => !current);
+                    }}
+                    title={markdownPreviewActive ? 'Edit markdown source' : 'Preview rendered markdown'}
+                    type="button"
+                  >
+                    {markdownPreviewActive ? '<>' : '#'}
+                  </button>
+                ) : null}
                 <h1>{mobileEditorTitle}</h1>
               </div>
               <SyncBadge compact status={status} />
@@ -1603,10 +1627,16 @@ export default function App() {
             ) : loadingTree ? (
               <div className="empty-state">Loading repository structure…</div>
             ) : selectedPath ? (
-              isMarkdownFile ? (
+              markdownPreviewActive ? (
+                <div className="markdown-preview">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+                </div>
+              ) : isMarkdownFile ? (
                 <CodeMirror
                   basicSetup={{
+                    lineNumbers: false,
                     foldGutter: false,
+                    highlightActiveLineGutter: false,
                   }}
                   className="editor-code"
                   extensions={markdownEditorExtensions}

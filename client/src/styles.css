@@ -212,6 +212,20 @@ select {
   line-height: 1;
 }
 
+.editor-mobile-toggle {
+  display: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid rgba(24, 31, 44, 0.16);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.74);
+  color: rgba(24, 31, 44, 0.9);
+  font-size: 0.88rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .pane-header h1,
 .pane-header h2,
 .error-panel h1 {
@@ -328,6 +342,54 @@ select {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.6),
     0 0 0 4px rgba(179, 96, 36, 0.08);
+}
+
+.markdown-preview {
+  width: 100%;
+  height: 100%;
+  min-height: 60vh;
+  overflow: auto;
+  border: 1px solid rgba(24, 31, 44, 0.08);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.76);
+  color: #1d2430;
+  padding: 22px;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  line-height: 1.62;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+.markdown-preview > :first-child {
+  margin-top: 0;
+}
+
+.markdown-preview > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-preview code,
+.markdown-preview pre {
+  font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+}
+
+.markdown-preview pre {
+  overflow: auto;
+  border: 1px solid rgba(24, 31, 44, 0.08);
+  border-radius: 12px;
+  background: rgba(20, 28, 40, 0.05);
+  padding: 12px;
+}
+
+.markdown-preview table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.markdown-preview th,
+.markdown-preview td {
+  border: 1px solid rgba(24, 31, 44, 0.12);
+  padding: 6px 8px;
+  text-align: left;
 }
 
 .editor-textarea:focus,
@@ -832,6 +894,13 @@ code {
     font-size: 1rem;
   }
 
+  .editor-mobile-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+  }
+
   .editor-header-copy-mobile {
     align-items: center;
     gap: 8px;
@@ -897,6 +966,12 @@ code {
 
   .editor-code .cm-scroller {
     font-size: 0.9rem;
+    line-height: 1.55;
+    padding: 16px;
+  }
+
+  .markdown-preview {
+    font-size: 0.95rem;
     line-height: 1.55;
     padding: 16px;
   }
