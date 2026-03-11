@@ -226,6 +226,29 @@ select {
   line-height: 1;
 }
 
+.editor-preview-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid rgba(24, 31, 44, 0.16);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.74);
+  color: rgba(24, 31, 44, 0.9);
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.editor-preview-toggle:focus-visible {
+  outline: none;
+  border-color: rgba(179, 96, 36, 0.38);
+  box-shadow: 0 0 0 4px rgba(179, 96, 36, 0.08);
+}
+
 .pane-header h1,
 .pane-header h2,
 .error-panel h1 {
@@ -899,6 +922,12 @@ code {
     align-items: center;
     justify-content: center;
     flex: 0 0 auto;
+  }
+
+  .editor-preview-toggle {
+    width: 30px;
+    height: 30px;
+    font-size: 0.88rem;
   }
 
   .editor-header-copy-mobile {

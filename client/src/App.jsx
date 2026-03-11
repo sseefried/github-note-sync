@@ -1606,6 +1606,19 @@ export default function App() {
                 </div>
               </div>
               <div className="header-actions">
+                {isMarkdownFile ? (
+                  <button
+                    aria-label={markdownPreviewActive ? 'Show markdown editor' : 'Show markdown preview'}
+                    className="editor-preview-toggle"
+                    onClick={() => {
+                      setShowMarkdownPreview((current) => !current);
+                    }}
+                    title={markdownPreviewActive ? 'Edit markdown source' : 'Preview rendered markdown'}
+                    type="button"
+                  >
+                    {markdownPreviewActive ? '<>' : '#'}
+                  </button>
+                ) : null}
                 <span className="user-badge">{authUser.username}</span>
                 <SyncBadge status={status} />
               </div>
