@@ -938,11 +938,12 @@ code {
 
   .editor-header-copy-mobile h1 {
     margin: 0;
-    max-width: min(52vw, 260px);
+    flex: 1 1 auto;
+    max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 1.02rem;
+    font-size: 0.94rem;
     line-height: 1.2;
   }
 

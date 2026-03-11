@@ -1496,7 +1496,23 @@ export default function App() {
 
     return selectedPath.toLowerCase().endsWith('.md');
   }, [selectedPath]);
-  const markdownEditorExtensions = useMemo(() => [markdown(), EditorView.lineWrapping], []);
+  const markdownEditorExtensions = useMemo(
+    () => [
+      markdown(),
+      EditorView.lineWrapping,
+      EditorView.editorAttributes.of({
+        autocapitalize: 'sentences',
+        autocorrect: 'off',
+        autocomplete: 'on',
+      }),
+      EditorView.contentAttributes.of({
+        autocapitalize: 'sentences',
+        autocorrect: 'off',
+        autocomplete: 'on',
+      }),
+    ],
+    [],
+  );
   const markdownPreviewActive = isMarkdownFile && showMarkdownPreview;
 
   useEffect(() => {
@@ -1659,11 +1675,13 @@ export default function App() {
                   onChange={(nextValue) => {
                     updateEditorContent(nextValue);
                   }}
-                  spellCheck={false}
+                  spellCheck
                   value={content}
                 />
               ) : (
                 <textarea
+                  autoCapitalize="sentences"
+                  autoCorrect="on"
                   className="editor-textarea"
                   onBlur={() => {
                     flushPendingWrite().catch(() => {});
