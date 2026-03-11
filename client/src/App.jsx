@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import CodeMirror from '@uiw/react-codemirror';
+import { markdown } from '@codemirror/lang-markdown';
+import { EditorView } from '@codemirror/view';
 
 const SERVER_URL = (import.meta.env.VITE_SERVER_URL ?? '').trim().replace(/\/$/, '');
 const CLIENT_WRITE_DEBOUNCE_MS = 3_000;
@@ -1388,8 +1391,7 @@ export default function App() {
     }
   }
 
-  function handleEditorChange(event) {
-    const nextContent = event.target.value;
+  function updateEditorContent(nextContent) {
     const activePath = selectedPathRef.current;
 
     setContent(nextContent);
@@ -1416,6 +1418,10 @@ export default function App() {
         : currentStatus,
     );
     schedulePendingWrite();
+  }
+
+  function handleEditorChange(event) {
+    updateEditorContent(event.target.value);
   }
 
   async function handleAuthSubmit(event) {
@@ -1479,6 +1485,14 @@ export default function App() {
 
     return selectedPath;
   }, [activeRepoAlias, selectedPath]);
+  const isMarkdownFile = useMemo(() => {
+    if (!selectedPath) {
+      return false;
+    }
+
+    return selectedPath.toLowerCase().endsWith('.md');
+  }, [selectedPath]);
+  const markdownEditorExtensions = useMemo(() => [markdown(), EditorView.lineWrapping], []);
 
   const repoSlug = status?.repo ?? '';
   const deployKeyUrl = repoSlug ? `https://github.com/${repoSlug}/settings/keys` : '';
@@ -1589,15 +1603,33 @@ export default function App() {
             ) : loadingTree ? (
               <div className="empty-state">Loading repository structure…</div>
             ) : selectedPath ? (
-              <textarea
-                className="editor-textarea"
-                onBlur={() => {
-                  flushPendingWrite().catch(() => {});
-                }}
-                onChange={handleEditorChange}
-                spellCheck={false}
-                value={content}
-              />
+              isMarkdownFile ? (
+                <CodeMirror
+                  basicSetup={{
+                    foldGutter: false,
+                  }}
+                  className="editor-code"
+                  extensions={markdownEditorExtensions}
+                  onBlur={() => {
+                    flushPendingWrite().catch(() => {});
+                  }}
+                  onChange={(nextValue) => {
+                    updateEditorContent(nextValue);
+                  }}
+                  spellCheck={false}
+                  value={content}
+                />
+              ) : (
+                <textarea
+                  className="editor-textarea"
+                  onBlur={() => {
+                    flushPendingWrite().catch(() => {});
+                  }}
+                  onChange={handleEditorChange}
+                  spellCheck={false}
+                  value={content}
+                />
+              )
             ) : (
               <div className="empty-state">This repository does not contain any files yet.</div>
             )}

@@ -297,6 +297,39 @@ select {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
 }
 
+.editor-code {
+  height: 100%;
+  min-height: 60vh;
+}
+
+.editor-code .cm-editor {
+  height: 100%;
+  border: 1px solid rgba(24, 31, 44, 0.08);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.76);
+  color: #1d2430;
+  outline: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+.editor-code .cm-scroller {
+  font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 0.98rem;
+  line-height: 1.65;
+  padding: 22px;
+}
+
+.editor-code .cm-content {
+  min-height: 100%;
+}
+
+.editor-code .cm-editor.cm-focused {
+  border-color: rgba(179, 96, 36, 0.38);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    0 0 0 4px rgba(179, 96, 36, 0.08);
+}
+
 .editor-textarea:focus,
 .field-input:focus {
   border-color: rgba(179, 96, 36, 0.38);
@@ -857,6 +890,12 @@ code {
   }
 
   .editor-textarea {
+    font-size: 0.9rem;
+    line-height: 1.55;
+    padding: 16px;
+  }
+
+  .editor-code .cm-scroller {
     font-size: 0.9rem;
     line-height: 1.55;
     padding: 16px;
