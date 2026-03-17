@@ -1213,6 +1213,19 @@ export default function App() {
     }
   }
 
+  async function restoreLocalRepoAliases() {
+    const workspaceAliases = await workspaceStoreRef.current?.listKnownRepoAliases?.();
+    const localAliases = [...new Set([...(workspaceAliases ?? []), ...getCachedRepoAliases()])].sort(
+      (left, right) => left.localeCompare(right),
+    );
+
+    if (localAliases.length > 0) {
+      setRepoAliases((currentAliases) => (currentAliases.length > 0 ? currentAliases : localAliases));
+    }
+
+    return localAliases;
+  }
+
   useEffect(() => {
     const nextActiveRepoAlias = resolveInitialRepoAlias({
       lastOpenedRepoAlias: getLastOpenedRepoAlias(),
@@ -1613,9 +1626,13 @@ export default function App() {
       return;
     }
 
-    loadRepoAliases().catch((error) => {
-      setAppError(error.message);
-    });
+    restoreLocalRepoAliases()
+      .catch(() => {})
+      .finally(() => {
+        loadRepoAliases().catch((error) => {
+          setAppError(error.message);
+        });
+      });
   }, [isAuthenticated, workspaceReady]);
 
   useEffect(() => {

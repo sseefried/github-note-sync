@@ -79,6 +79,7 @@ When the client sits behind one or more proxies, it also accepts requests that a
 25. The production build exposes a Web App Manifest and Service Worker, so Android Chrome can install the app from the browser menu, relaunch at `/`, and restore the last valid repo alias from local state in app/fullscreen display mode.
 26. The production Service Worker now precaches the built app shell, including the hashed JS/CSS bundles emitted by Vite. That means if Android or Chrome discards the PWA process in the background, a later cold relaunch can still boot offline from the local precache and then restore repo/file/editor state from IndexedDB.
 27. Startup no longer waits indefinitely for `/api/auth/session` during cold relaunch. The initial session probe now times out after a short window and falls back to cached authenticated session metadata when available, so Android process eviction plus flaky connectivity does not leave the app stuck on the startup screen.
+28. Repo alias restore is now cache-first for rendering and network-preferred for truth. On startup the client immediately shows aliases recovered from IndexedDB/local storage so the last workspace can hydrate without a blank dropdown, then refreshes `/api/repos` in the background and replaces that list with the authoritative server result when reachable.
 
 If the client and server are on different origins, the server must allow the client origin via `allowedOrigins`.
 The browser client uses the server-managed session cookie (`credentials: include`) so users stay signed in across browser restarts until the session expires or they log out.
@@ -195,6 +196,8 @@ The Service Worker is now build-aware instead of hand-maintaining a tiny shell l
 
 Startup auth is also bounded now. The first `/api/auth/session` request uses a short timeout instead of waiting forever for the browser network stack to decide that the request failed. If that probe times out and there is cached authenticated session metadata from a previous online run, the client opens from cache immediately and continues treating the server as degraded/offline until a later probe succeeds.
 
+Repo alias startup follows the same principle, but without changing the source of truth. The client seeds the alias list from local cache immediately so the last repo can be selected and hydrated without waiting on `/api/repos`, then still asks the server for the canonical alias list and replaces the cached view with that network result as soon as it arrives.
+
 Design philosophy:
 
 - Keep accepted edits durable on-device first, then replay them to the server when connectivity permits.
@@ -221,3 +224,4 @@ Design philosophy:
 - Keep mobile launch experience app-like by shipping a manifest/service worker pair for Android Chrome install mode.
 - Treat “browser process was killed and later relaunched offline” as a first-class PWA scenario by precaching the full built shell, not just `index.html`.
 - Bound startup auth checks so cached local state can reopen promptly even when the browser has not yet declared the network request dead.
+- Prefer the network whenever it is reachable, but never make the user wait for obvious cached workspace state before rendering it.
