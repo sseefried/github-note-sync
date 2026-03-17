@@ -16,7 +16,7 @@ import {
 import { createWorkspaceStore } from './local-first/workspace-store.js';
 import {
   buildRepoPath,
-  getRepoAliasFromPathname,
+  parseRepoRoute,
   resolveInitialRepoAlias,
 } from './local-first/route-state.js';
 import { createReplacePatchOperations } from './local-first/patch-ops.js';
@@ -485,10 +485,10 @@ function AuthScreen({
 }
 
 export default function App() {
+  const initialRoute = typeof window === 'undefined' ? { filePath: '', repoAlias: '' } : parseRepoRoute(window.location.pathname);
   const [activeSidebarTab, setActiveSidebarTab] = useState('select');
-  const [routeRepoAlias, setRouteRepoAlias] = useState(() =>
-    typeof window === 'undefined' ? '' : getRepoAliasFromPathname(window.location.pathname),
-  );
+  const [routeRepoAlias, setRouteRepoAlias] = useState(initialRoute.repoAlias);
+  const [routeFilePath, setRouteFilePath] = useState(initialRoute.filePath);
   const [tree, setTree] = useState(null);
   const [status, setStatus] = useState(null);
   const [selectedPath, setSelectedPath] = useState(null);
@@ -705,7 +705,9 @@ export default function App() {
 
   useEffect(() => {
     function handlePopState() {
-      setRouteRepoAlias(getRepoAliasFromPathname(window.location.pathname));
+      const nextRoute = parseRepoRoute(window.location.pathname);
+      setRouteRepoAlias(nextRoute.repoAlias);
+      setRouteFilePath(nextRoute.filePath);
     }
 
     window.addEventListener('popstate', handlePopState);
@@ -1116,14 +1118,16 @@ export default function App() {
 
   flushPendingWriteRef.current = flushPendingWrite;
 
-  function navigateToRepoAlias(repoAlias, { replace = false } = {}) {
+  function navigateToRoute(repoAlias, filePath = '', { replace = false } = {}) {
     if (typeof window === 'undefined') {
       setRouteRepoAlias(repoAlias);
+      setRouteFilePath(filePath);
       return;
     }
 
     const normalizedAlias = typeof repoAlias === 'string' ? repoAlias.trim() : '';
-    const nextPath = buildRepoPath(normalizedAlias);
+    const normalizedFilePath = typeof filePath === 'string' ? filePath.trim().replace(/^\/+/, '') : '';
+    const nextPath = buildRepoPath(normalizedAlias, normalizedFilePath);
     const historyMethod = replace ? 'replaceState' : 'pushState';
 
     if (window.location.pathname !== nextPath) {
@@ -1131,6 +1135,7 @@ export default function App() {
     }
 
     setRouteRepoAlias(normalizedAlias);
+    setRouteFilePath(normalizedFilePath);
   }
 
   function promptForSimpleName(label, placeholder) {
@@ -1196,7 +1201,7 @@ export default function App() {
     });
 
     if (!routeRepoAlias && nextActiveRepoAlias) {
-      navigateToRepoAlias(nextActiveRepoAlias, { replace: true });
+      navigateToRoute(nextActiveRepoAlias, '', { replace: true });
       return;
     }
 
@@ -1208,6 +1213,34 @@ export default function App() {
       setLastOpenedRepoAlias(activeRepoAlias);
     }
   }, [activeRepoAlias]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !workspaceReady || !activeRepoAlias || !tree) {
+      return;
+    }
+
+    if (!routeFilePath) {
+      return;
+    }
+
+    if (routeFilePath === selectedPathRef.current) {
+      return;
+    }
+
+    if (!hasFilePath(tree, routeFilePath)) {
+      const fallbackPath =
+        selectedPathRef.current && hasFilePath(tree, selectedPathRef.current)
+          ? selectedPathRef.current
+          : findFirstFile(tree);
+      navigateToRoute(activeRepoAlias, fallbackPath ?? '', { replace: true });
+      return;
+    }
+
+    loadFile(routeFilePath, activeRepoAlias, {
+      preferLocal: true,
+      routeMode: false,
+    }).catch(() => {});
+  }, [activeRepoAlias, isAuthenticated, routeFilePath, tree, workspaceReady]);
 
   async function loadPublicKey(repoAlias) {
     if (!repoAlias) {
@@ -1278,13 +1311,16 @@ export default function App() {
     setRepoError('');
 
     const nextSelectedPath =
-      repoSnapshot.selectedPath && hasFilePath(repoSnapshot.tree, repoSnapshot.selectedPath)
-        ? repoSnapshot.selectedPath
-        : findFirstFile(repoSnapshot.tree);
+      routeFilePath && hasFilePath(repoSnapshot.tree, routeFilePath)
+        ? routeFilePath
+        : repoSnapshot.selectedPath && hasFilePath(repoSnapshot.tree, repoSnapshot.selectedPath)
+          ? repoSnapshot.selectedPath
+          : findFirstFile(repoSnapshot.tree);
 
     if (!nextSelectedPath) {
       setSelectedPath(null);
       setContent('');
+      navigateToRoute(repoAlias, '', { replace: true });
       return true;
     }
 
@@ -1292,6 +1328,7 @@ export default function App() {
 
     setSelectedPath(nextSelectedPath);
     setContent(fileSnapshot?.content ?? '');
+    navigateToRoute(repoAlias, nextSelectedPath, { replace: true });
 
     return true;
   }
@@ -1299,7 +1336,7 @@ export default function App() {
   async function loadFile(
     path,
     repoAlias = activeRepoAliasRef.current,
-    { preferLocal = true } = {},
+    { preferLocal = true, routeMode = 'replace' } = {},
   ) {
     if (!path || !repoAlias) {
       setContent('');
@@ -1318,6 +1355,9 @@ export default function App() {
           setContent(cachedFileSnapshot.content);
           setSelectedPath(path);
           await workspaceStore?.rememberSelectedPath(repoAlias, path);
+          if (routeMode !== false) {
+            navigateToRoute(repoAlias, path, { replace: routeMode !== 'push' });
+          }
         }
       }
 
@@ -1335,6 +1375,9 @@ export default function App() {
       });
       setContent(savedSnapshot?.content ?? data.content);
       await workspaceStore?.rememberSelectedPath(repoAlias, path);
+      if (routeMode !== false) {
+        navigateToRoute(repoAlias, path, { replace: routeMode !== 'push' });
+      }
     } catch (error) {
       if (handleUnauthorized(error)) {
         return;
@@ -1348,6 +1391,9 @@ export default function App() {
         if (cachedFileSnapshot) {
           setContent(cachedFileSnapshot.content);
           setSelectedPath(path);
+          if (routeMode !== false) {
+            navigateToRoute(repoAlias, path, { replace: routeMode !== 'push' });
+          }
           setSaveError('Offline. Showing cached local content.');
           return;
         }
@@ -1391,9 +1437,11 @@ export default function App() {
       setStatus(data.status);
 
       const nextSelectedPath =
-        selectedPathRef.current && hasFilePath(data.tree, selectedPathRef.current)
-          ? selectedPathRef.current
-          : findFirstFile(data.tree);
+        routeFilePath && hasFilePath(data.tree, routeFilePath)
+          ? routeFilePath
+          : selectedPathRef.current && hasFilePath(data.tree, selectedPathRef.current)
+            ? selectedPathRef.current
+            : findFirstFile(data.tree);
       const stateChanged = data.status.stateVersion !== statusRef.current?.stateVersion;
 
       await workspaceStore?.saveRepoSnapshot({
@@ -1409,11 +1457,13 @@ export default function App() {
       ) {
         await loadFile(nextSelectedPath, repoAlias, {
           preferLocal: true,
+          routeMode: 'replace',
         });
       } else if (!nextSelectedPath) {
         setSelectedPath(null);
         setContent('');
         await workspaceStore?.rememberSelectedPath(repoAlias, null);
+        navigateToRoute(repoAlias, '', { replace: true });
       }
     } catch (error) {
       if (handleUnauthorized(error)) {
@@ -1494,7 +1544,7 @@ export default function App() {
       }
 
       if (forceReloadFile || activePath !== selectedPathRef.current) {
-        await loadFile(activePath, repoAlias);
+        await loadFile(activePath, repoAlias, { routeMode: 'replace' });
       }
     } catch (error) {
       if (handleUnauthorized(error)) {
@@ -1692,7 +1742,7 @@ export default function App() {
 
   async function handleFileSelect(path) {
     await flushPendingWrite();
-    await loadFile(path, activeRepoAliasRef.current);
+    await loadFile(path, activeRepoAliasRef.current, { routeMode: 'push' });
 
     if (isMobileLayout()) {
       scrollToEditorPane();
@@ -1706,7 +1756,7 @@ export default function App() {
       await flushPendingWrite();
     } catch {}
 
-    navigateToRepoAlias(nextRepoAlias);
+    navigateToRoute(nextRepoAlias);
     setEditingAlias(nextRepoAlias);
     setCopyStatus('');
   }
@@ -1745,7 +1795,7 @@ export default function App() {
       setRepoAliasDraft('');
       setRepoDraft('');
       await loadRepoAliases();
-      navigateToRepoAlias(data.repoAlias);
+      navigateToRoute(data.repoAlias);
       setEditingAlias(data.repoAlias);
       setEditingRepoDraft(data.repo);
       setActiveSidebarTab('aliases');
@@ -1796,7 +1846,7 @@ export default function App() {
         status: data.status,
         tree: data.tree,
       });
-      await loadFile(nextPath, activeRepoAliasRef.current);
+      await loadFile(nextPath, activeRepoAliasRef.current, { routeMode: 'push' });
     } catch (error) {
       if (handleUnauthorized(error)) {
         return;
@@ -1972,7 +2022,7 @@ export default function App() {
       const deletedActiveAlias = activeRepoAliasRef.current === deletedAlias;
 
       if (deletedActiveAlias) {
-        navigateToRepoAlias('', { replace: true });
+        navigateToRoute('', '', { replace: true });
       }
 
       await loadRepoAliases();
