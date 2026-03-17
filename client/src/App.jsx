@@ -4,6 +4,22 @@ import { markdown } from '@codemirror/lang-markdown';
 import { EditorView } from '@codemirror/view';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import {
+  clearLocalFirstSettings,
+  getCachedRepoAliases,
+  getCachedSessionState,
+  getLastOpenedRepoAlias,
+  setCachedRepoAliases,
+  setCachedSessionState,
+  setLastOpenedRepoAlias,
+} from './local-first/local-settings.js';
+import { createWorkspaceStore } from './local-first/workspace-store.js';
+import {
+  buildRepoPath,
+  getRepoAliasFromPathname,
+  resolveInitialRepoAlias,
+} from './local-first/route-state.js';
+import { deriveSyncState } from './local-first/sync-state.js';
 
 const SERVER_URL = (import.meta.env.VITE_SERVER_URL ?? '').trim().replace(/\/$/, '');
 const CLIENT_WRITE_DEBOUNCE_MS = 3_000;
@@ -47,6 +63,22 @@ async function fetchJson(url, options = {}) {
   }
 
   return data;
+}
+
+function isNetworkFailure(error) {
+  return !(error instanceof ApiError);
+}
+
+function getConnectivityStatusFromNavigator() {
+  if (typeof navigator === 'undefined') {
+    return 'online';
+  }
+
+  return navigator.onLine ? 'online' : 'offline';
+}
+
+function getConnectivityStatusFromError() {
+  return typeof navigator !== 'undefined' && navigator.onLine ? 'degraded' : 'offline';
 }
 
 function findFirstFile(node) {
@@ -93,11 +125,9 @@ function hasFileDescendant(node) {
   return (node.children ?? []).some((child) => hasFileDescendant(child));
 }
 
-function SyncBadge({ compact = false, status }) {
-  const label = status?.lastSyncStatus ?? 'starting';
-  const compactLabel = label === 'syncing' || label === 'starting' ? 'Syncing' : 'Idle';
-  const badgeLabel = compact ? compactLabel : label;
-  const badgeClassSuffix = compact ? compactLabel.toLowerCase() : label;
+function SyncBadge({ compact = false, syncState }) {
+  const badgeLabel = compact ? syncState.badgeLabel : syncState.badgeLabel;
+  const badgeClassSuffix = syncState.badgeStatus;
 
   return (
     <span className={`sync-badge sync-badge-${badgeClassSuffix}${compact ? ' sync-badge-compact' : ''}`}>
@@ -112,20 +142,6 @@ function clampSidebarWidth(width, containerWidth = Number.POSITIVE_INFINITY) {
     : MAX_SIDEBAR_WIDTH;
 
   return Math.max(MIN_SIDEBAR_WIDTH, Math.min(width, MAX_SIDEBAR_WIDTH, maxWidthFromContainer));
-}
-
-function getRepoAliasFromLocation() {
-  if (typeof window === 'undefined') {
-    return '';
-  }
-
-  const [firstSegment = ''] = window.location.pathname.split('/').filter(Boolean);
-
-  try {
-    return decodeURIComponent(firstSegment ?? '').trim();
-  } catch {
-    return '';
-  }
 }
 
 function getMobileEditorTitle(path) {
@@ -468,7 +484,9 @@ function AuthScreen({
 
 export default function App() {
   const [activeSidebarTab, setActiveSidebarTab] = useState('select');
-  const [routeRepoAlias, setRouteRepoAlias] = useState(() => getRepoAliasFromLocation());
+  const [routeRepoAlias, setRouteRepoAlias] = useState(() =>
+    typeof window === 'undefined' ? '' : getRepoAliasFromPathname(window.location.pathname),
+  );
   const [tree, setTree] = useState(null);
   const [status, setStatus] = useState(null);
   const [selectedPath, setSelectedPath] = useState(null);
@@ -500,6 +518,12 @@ export default function App() {
   const [passwordDraft, setPasswordDraft] = useState('');
   const [confirmPasswordDraft, setConfirmPasswordDraft] = useState('');
   const [showMarkdownPreview, setShowMarkdownPreview] = useState(false);
+  const [workspaceReady, setWorkspaceReady] = useState(false);
+  const [connectivityStatus, setConnectivityStatus] = useState(() =>
+    getConnectivityStatusFromNavigator(),
+  );
+  const [pendingWriteCount, setPendingWriteCount] = useState(0);
+  const [syncingWrites, setSyncingWrites] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     if (typeof window === 'undefined') {
       return DEFAULT_SIDEBAR_WIDTH;
@@ -522,10 +546,11 @@ export default function App() {
   const statusRef = useRef(null);
   const selectedPathRef = useRef(null);
   const activeRepoAliasRef = useRef('');
+  const connectivityStatusRef = useRef(getConnectivityStatusFromNavigator());
   const flushPendingWriteRef = useRef(null);
   const flushTimerRef = useRef(null);
-  const pendingWriteRef = useRef(null);
-  const writeSequenceRef = useRef(0);
+  const syncingWritesRef = useRef(false);
+  const workspaceStoreRef = useRef(null);
   const resizeCleanupRef = useRef(null);
 
   const missingServerUrl = SERVER_URL === '';
@@ -572,42 +597,68 @@ export default function App() {
     setCopyStatus('');
     setEditingAlias('');
     setEditingRepoDraft('');
+    setPendingWriteCount(0);
+    setSyncingWrites(false);
     setShowMarkdownPreview(false);
 
     if (flushTimerRef.current) {
       window.clearTimeout(flushTimerRef.current);
       flushTimerRef.current = null;
     }
-
-    pendingWriteRef.current = null;
   }
 
   async function loadSessionState() {
-    const data = await fetchJson('/api/auth/session');
+    try {
+      const data = await fetchJson('/api/auth/session');
 
-    setHasUsers(Boolean(data.hasUsers));
-    setRegistrationOpen(Boolean(data.registrationOpen));
-    setAuthUser(data.user ?? null);
-    setAuthReady(true);
+      setConnectivityStatus('online');
+      setCachedSessionState({
+        hasUsers: Boolean(data.hasUsers),
+        registrationOpen: Boolean(data.registrationOpen),
+        user: data.user ?? null,
+      });
+      setHasUsers(Boolean(data.hasUsers));
+      setRegistrationOpen(Boolean(data.registrationOpen));
+      setAuthUser(data.user ?? null);
+      setAuthReady(true);
 
-    if (data.user) {
-      setAuthError('');
+      if (data.user) {
+        setAuthError('');
+        return data;
+      }
+
+      setAuthMode((currentMode) => {
+        if (!data.hasUsers) {
+          return 'register';
+        }
+
+        if (!data.registrationOpen && currentMode === 'register') {
+          return 'login';
+        }
+
+        return currentMode;
+      });
+
       return data;
+    } catch (error) {
+      if (!isNetworkFailure(error)) {
+        throw error;
+      }
+
+      const cachedSessionState = getCachedSessionState();
+
+      if (cachedSessionState?.user) {
+        setConnectivityStatus(getConnectivityStatusFromError());
+        setHasUsers(Boolean(cachedSessionState.hasUsers));
+        setRegistrationOpen(Boolean(cachedSessionState.registrationOpen));
+        setAuthUser(cachedSessionState.user);
+        setAuthReady(true);
+        setAuthError('');
+        return cachedSessionState;
+      }
+
+      throw error;
     }
-
-    setAuthMode((currentMode) => {
-      if (!data.hasUsers) {
-        return 'register';
-      }
-
-      if (!data.registrationOpen && currentMode === 'register') {
-        return 'login';
-      }
-
-      return currentMode;
-    });
-
-    return data;
   }
 
   function handleUnauthorized(error, message = 'Your session expired. Sign in again.') {
@@ -615,6 +666,7 @@ export default function App() {
       return false;
     }
 
+    setCachedSessionState(null);
     resetWorkspaceState();
     setAuthUser(null);
     setAuthReady(true);
@@ -640,12 +692,58 @@ export default function App() {
   }, [activeRepoAlias]);
 
   useEffect(() => {
+    connectivityStatusRef.current = connectivityStatus;
+  }, [connectivityStatus]);
+
+  useEffect(() => {
+    syncingWritesRef.current = syncingWrites;
+  }, [syncingWrites]);
+
+  useEffect(() => {
     function handlePopState() {
-      setRouteRepoAlias(getRepoAliasFromLocation());
+      setRouteRepoAlias(getRepoAliasFromPathname(window.location.pathname));
     }
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    createWorkspaceStore()
+      .then(async (workspaceStore) => {
+        if (!mounted) {
+          workspaceStore.dispose();
+          return;
+        }
+
+        workspaceStoreRef.current = workspaceStore;
+        setPendingWriteCount(await workspaceStore.countPendingWrites());
+        setWorkspaceReady(true);
+      })
+      .catch(() => {
+        setWorkspaceReady(true);
+      });
+
+    return () => {
+      mounted = false;
+      workspaceStoreRef.current?.dispose?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    function handleNetworkStatusChange() {
+      setConnectivityStatus(getConnectivityStatusFromNavigator());
+    }
+
+    window.addEventListener('online', handleNetworkStatusChange);
+    window.addEventListener('offline', handleNetworkStatusChange);
+
+    return () => {
+      window.removeEventListener('online', handleNetworkStatusChange);
+      window.removeEventListener('offline', handleNetworkStatusChange);
+    };
   }, []);
 
   useEffect(() => {
@@ -690,42 +788,85 @@ export default function App() {
     return () => window.removeEventListener('resize', handleWindowResize);
   }, []);
 
+  async function syncPendingWriteCount() {
+    const workspaceStore = workspaceStoreRef.current;
+
+    if (!workspaceStore) {
+      setPendingWriteCount(0);
+      return 0;
+    }
+
+    const nextPendingWriteCount = await workspaceStore.countPendingWrites();
+    setPendingWriteCount(nextPendingWriteCount);
+    return nextPendingWriteCount;
+  }
+
   async function flushPendingWrite({ keepalive = false } = {}) {
     if (flushTimerRef.current) {
       window.clearTimeout(flushTimerRef.current);
       flushTimerRef.current = null;
     }
 
-    const pendingWrite = pendingWriteRef.current;
+    const workspaceStore = workspaceStoreRef.current;
 
-    if (!pendingWrite) {
+    if (!workspaceStore || syncingWritesRef.current || !isAuthenticated) {
       return;
     }
 
-    pendingWriteRef.current = null;
+    if (connectivityStatusRef.current === 'offline') {
+      return;
+    }
+
+    const pendingWrites = await workspaceStore.listPendingWrites();
+
+    if (pendingWrites.length === 0) {
+      setPendingWriteCount(0);
+      return;
+    }
+
+    syncingWritesRef.current = true;
+    setSyncingWrites(true);
 
     try {
-      const data = await fetchJson('/api/file', {
-        body: JSON.stringify({
-          content: pendingWrite.content,
-          path: pendingWrite.path,
-          repoAlias: pendingWrite.repoAlias,
-        }),
-        keepalive,
-        method: 'PUT',
-      });
+      for (const pendingWrite of pendingWrites) {
+        const data = await fetchJson('/api/file', {
+          body: JSON.stringify({
+            content: pendingWrite.content,
+            path: pendingWrite.path,
+            repoAlias: pendingWrite.repoAlias,
+          }),
+          keepalive,
+          method: 'PUT',
+        });
 
-      if (pendingWrite.sequence === writeSequenceRef.current) {
-        setStatus(data.status);
+        setConnectivityStatus('online');
+        await workspaceStore.acknowledgeWrite({
+          content: pendingWrite.content,
+          filePath: pendingWrite.path,
+          repoAlias: pendingWrite.repoAlias,
+          writeId: pendingWrite.writeId,
+        });
+
+        if (pendingWrite.repoAlias === activeRepoAliasRef.current) {
+          setStatus(data.status);
+        }
       }
     } catch (error) {
       if (handleUnauthorized(error)) {
         return;
       }
 
-      pendingWriteRef.current = pendingWrite;
-      setSaveError(error.message);
+      if (isNetworkFailure(error)) {
+        setConnectivityStatus(getConnectivityStatusFromError());
+      } else {
+        setSaveError(error.message);
+      }
+
       throw error;
+    } finally {
+      syncingWritesRef.current = false;
+      setSyncingWrites(false);
+      await syncPendingWriteCount();
     }
   }
 
@@ -748,7 +889,7 @@ export default function App() {
     }
 
     const normalizedAlias = typeof repoAlias === 'string' ? repoAlias.trim() : '';
-    const nextPath = normalizedAlias ? `/${encodeURIComponent(normalizedAlias)}` : '/';
+    const nextPath = buildRepoPath(normalizedAlias);
     const historyMethod = replace ? 'replaceState' : 'pushState';
 
     if (window.location.pathname !== nextPath) {
@@ -787,7 +928,9 @@ export default function App() {
       const data = await fetchJson('/api/repos');
       const aliases = data.repoAliases ?? [];
 
+      setConnectivityStatus('online');
       setRepoAliases(aliases);
+      setCachedRepoAliases(aliases);
 
       return aliases;
     } catch (error) {
@@ -795,16 +938,42 @@ export default function App() {
         return [];
       }
 
+      if (isNetworkFailure(error)) {
+        setConnectivityStatus(getConnectivityStatusFromError());
+
+        const workspaceAliases = await workspaceStoreRef.current?.listKnownRepoAliases?.();
+        const cachedAliases = [...new Set([...(workspaceAliases ?? []), ...getCachedRepoAliases()])].sort(
+          (left, right) => left.localeCompare(right),
+        );
+
+        setRepoAliases(cachedAliases);
+        return cachedAliases;
+      }
+
       throw error;
     }
   }
 
   useEffect(() => {
-    const nextActiveRepoAlias =
-      routeRepoAlias && repoAliases.includes(routeRepoAlias) ? routeRepoAlias : '';
+    const nextActiveRepoAlias = resolveInitialRepoAlias({
+      lastOpenedRepoAlias: getLastOpenedRepoAlias(),
+      pathnameAlias: routeRepoAlias,
+      repoAliases,
+    });
+
+    if (!routeRepoAlias && nextActiveRepoAlias) {
+      navigateToRepoAlias(nextActiveRepoAlias, { replace: true });
+      return;
+    }
 
     setActiveRepoAlias(nextActiveRepoAlias);
   }, [repoAliases, routeRepoAlias]);
+
+  useEffect(() => {
+    if (activeRepoAlias) {
+      setLastOpenedRepoAlias(activeRepoAlias);
+    }
+  }, [activeRepoAlias]);
 
   async function loadPublicKey(repoAlias) {
     if (!repoAlias) {
@@ -814,14 +983,20 @@ export default function App() {
 
     try {
       const data = await fetchJson(`/api/repos/${encodeURIComponent(repoAlias)}/public-key`);
+      setConnectivityStatus('online');
       setPublicKey(data.publicKey);
     } catch (error) {
       if (handleUnauthorized(error)) {
         return;
       }
 
+      if (isNetworkFailure(error)) {
+        setConnectivityStatus(getConnectivityStatusFromError());
+        return;
+      }
+
       setPublicKey('');
-      setRepoError(error.message);
+      setSaveError(error.message);
     }
   }
 
@@ -834,6 +1009,7 @@ export default function App() {
 
     try {
       const data = await fetchJson(`/api/repos/${encodeURIComponent(repoAlias)}`);
+      setConnectivityStatus('online');
       setEditingAlias(data.repoAlias);
       setEditingRepoDraft(data.repo);
     } catch (error) {
@@ -841,28 +1017,121 @@ export default function App() {
         return;
       }
 
-      setRepoError(error.message);
+      if (isNetworkFailure(error)) {
+        setConnectivityStatus(getConnectivityStatusFromError());
+        return;
+      }
+
+      setSaveError(error.message);
     }
   }
 
-  async function loadFile(path, repoAlias = activeRepoAliasRef.current) {
+  async function hydrateRepoFromLocal(repoAlias) {
+    const workspaceStore = workspaceStoreRef.current;
+
+    if (!workspaceStore || !repoAlias) {
+      return false;
+    }
+
+    const repoSnapshot = await workspaceStore.getRepoSnapshot(repoAlias);
+
+    if (!repoSnapshot?.tree) {
+      return false;
+    }
+
+    setTree(repoSnapshot.tree);
+    setStatus(repoSnapshot.status ?? null);
+    setRepoError('');
+
+    const nextSelectedPath =
+      repoSnapshot.selectedPath && hasFilePath(repoSnapshot.tree, repoSnapshot.selectedPath)
+        ? repoSnapshot.selectedPath
+        : findFirstFile(repoSnapshot.tree);
+
+    if (!nextSelectedPath) {
+      setSelectedPath(null);
+      setContent('');
+      return true;
+    }
+
+    const pendingWrite = await workspaceStore.getPendingWrite(repoAlias, nextSelectedPath);
+    const fileSnapshot =
+      pendingWrite ?? (await workspaceStore.getFileSnapshot(repoAlias, nextSelectedPath));
+
+    setSelectedPath(nextSelectedPath);
+    setContent(fileSnapshot?.content ?? '');
+
+    return true;
+  }
+
+  async function loadFile(
+    path,
+    repoAlias = activeRepoAliasRef.current,
+    { preferLocal = true } = {},
+  ) {
     if (!path || !repoAlias) {
       setContent('');
       return;
     }
 
+    const workspaceStore = workspaceStoreRef.current;
     setLoadingFile(true);
     setSaveError('');
 
     try {
+      const pendingWrite = await workspaceStore?.getPendingWrite(repoAlias, path);
+
+      if (pendingWrite) {
+        setContent(pendingWrite.content);
+        setSelectedPath(path);
+        await workspaceStore?.rememberSelectedPath(repoAlias, path);
+        return;
+      }
+
+      if (preferLocal) {
+        const cachedFileSnapshot = await workspaceStore?.getFileSnapshot(repoAlias, path);
+
+        if (cachedFileSnapshot) {
+          setContent(cachedFileSnapshot.content);
+          setSelectedPath(path);
+          await workspaceStore?.rememberSelectedPath(repoAlias, path);
+        }
+      }
+
       const data = await fetchJson(
         `/api/file?repoAlias=${encodeURIComponent(repoAlias)}&path=${encodeURIComponent(path)}`,
       );
+
+      setConnectivityStatus('online');
       setContent(data.content);
       setSelectedPath(path);
+      await Promise.all([
+        workspaceStore?.rememberSelectedPath(repoAlias, path),
+        workspaceStore?.saveFileSnapshot({
+          content: data.content,
+          filePath: path,
+          origin: 'server',
+          repoAlias,
+        }),
+      ]);
     } catch (error) {
       if (handleUnauthorized(error)) {
         return;
+      }
+
+      if (isNetworkFailure(error)) {
+        setConnectivityStatus(getConnectivityStatusFromError());
+
+        const cachedFileSnapshot =
+          (await workspaceStore?.getPendingWrite(repoAlias, path)) ??
+          (await workspaceStore?.getFileSnapshot(repoAlias, path));
+
+        if (cachedFileSnapshot) {
+          setContent(cachedFileSnapshot.content);
+          setSelectedPath(path);
+          setSaveError('Offline. Showing cached local content.');
+          return;
+        }
       }
 
       setSaveError(error.message);
@@ -881,8 +1150,12 @@ export default function App() {
       return;
     }
 
+    const workspaceStore = workspaceStoreRef.current;
+
     try {
       const data = await fetchJson(`/api/bootstrap?repoAlias=${encodeURIComponent(repoAlias)}`);
+
+      setConnectivityStatus('online');
 
       if (!data.ready) {
         setRepoError(data.error ?? 'The repository is not ready yet.');
@@ -898,27 +1171,46 @@ export default function App() {
       setTree(data.tree);
       setStatus(data.status);
 
-      const activePath =
+      const nextSelectedPath =
         selectedPathRef.current && hasFilePath(data.tree, selectedPathRef.current)
           ? selectedPathRef.current
           : findFirstFile(data.tree);
-      const hasPendingWriteForActiveFile =
-        pendingWriteRef.current?.repoAlias === repoAlias &&
-        pendingWriteRef.current?.path === activePath;
       const stateChanged = data.status.stateVersion !== statusRef.current?.stateVersion;
 
+      await workspaceStore?.saveRepoSnapshot({
+        repoAlias,
+        selectedPath: nextSelectedPath,
+        status: data.status,
+        tree: data.tree,
+      });
+
       if (
-        activePath &&
-        !hasPendingWriteForActiveFile &&
-        (forceReloadFile || stateChanged || activePath !== selectedPathRef.current)
+        nextSelectedPath &&
+        (forceReloadFile || stateChanged || nextSelectedPath !== selectedPathRef.current)
       ) {
-        await loadFile(activePath, repoAlias);
-      } else if (!activePath) {
+        const pendingWrite = await workspaceStore?.getPendingWrite(repoAlias, nextSelectedPath);
+
+        await loadFile(nextSelectedPath, repoAlias, {
+          preferLocal: Boolean(pendingWrite),
+        });
+      } else if (!nextSelectedPath) {
         setSelectedPath(null);
         setContent('');
+        await workspaceStore?.rememberSelectedPath(repoAlias, null);
       }
     } catch (error) {
       if (handleUnauthorized(error)) {
+        return;
+      }
+
+      if (isNetworkFailure(error)) {
+        setConnectivityStatus(getConnectivityStatusFromError());
+
+        if (await hydrateRepoFromLocal(repoAlias)) {
+          return;
+        }
+
+        setRepoError('Offline. This repo is not cached on this device yet.');
         return;
       }
 
@@ -948,9 +1240,9 @@ export default function App() {
       flushTimerRef.current = null;
     }
 
-    pendingWriteRef.current = null;
-
     try {
+      await flushPendingWrite();
+
       const data = await fetchJson('/api/refresh', {
         body: JSON.stringify({
           repoAlias,
@@ -958,9 +1250,20 @@ export default function App() {
         method: 'POST',
       });
 
+      setConnectivityStatus('online');
       setRepoError('');
       setStatus(data.status);
       setTree(data.tree);
+
+      await workspaceStoreRef.current?.saveRepoSnapshot({
+        repoAlias,
+        selectedPath:
+          selectedPathRef.current && hasFilePath(data.tree, selectedPathRef.current)
+            ? selectedPathRef.current
+            : findFirstFile(data.tree),
+        status: data.status,
+        tree: data.tree,
+      });
 
       const activePath =
         selectedPathRef.current && hasFilePath(data.tree, selectedPathRef.current)
@@ -978,6 +1281,17 @@ export default function App() {
       }
     } catch (error) {
       if (handleUnauthorized(error)) {
+        return;
+      }
+
+      if (isNetworkFailure(error)) {
+        setConnectivityStatus(getConnectivityStatusFromError());
+
+        if (await hydrateRepoFromLocal(repoAlias)) {
+          return;
+        }
+
+        setRepoError('Offline. This repo is not cached on this device yet.');
         return;
       }
 
@@ -1003,6 +1317,10 @@ export default function App() {
   }, [missingServerUrl]);
 
   useEffect(() => {
+    if (!workspaceReady) {
+      return;
+    }
+
     if (!isAuthenticated) {
       resetWorkspaceState();
       return;
@@ -1011,10 +1329,10 @@ export default function App() {
     loadRepoAliases().catch((error) => {
       setAppError(error.message);
     });
-  }, [isAuthenticated]);
+  }, [isAuthenticated, workspaceReady]);
 
   useEffect(() => {
-    if (!isAuthenticated || !activeRepoAlias) {
+    if (!isAuthenticated || !workspaceReady || !activeRepoAlias) {
       setTree(null);
       setStatus(null);
       setSelectedPath(null);
@@ -1023,14 +1341,44 @@ export default function App() {
       return undefined;
     }
 
-    refreshTreeState({ forceReloadFile: true, repoAlias: activeRepoAlias });
+    setLoadingTree(true);
+
+    hydrateRepoFromLocal(activeRepoAlias)
+      .catch(() => false)
+      .finally(() => {
+        loadState({ forceReloadFile: true, repoAlias: activeRepoAlias }).catch(() => {});
+      });
+
+    return undefined;
+  }, [activeRepoAlias, isAuthenticated, workspaceReady]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !workspaceReady) {
+      return undefined;
+    }
 
     const interval = window.setInterval(() => {
-      loadState({ repoAlias: activeRepoAliasRef.current });
+      flushPendingWrite().catch(() => {});
+
+      if (activeRepoAliasRef.current) {
+        loadState({ repoAlias: activeRepoAliasRef.current }).catch(() => {});
+      }
     }, 3_000);
 
     return () => window.clearInterval(interval);
-  }, [activeRepoAlias, isAuthenticated]);
+  }, [isAuthenticated, workspaceReady]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !workspaceReady || connectivityStatus !== 'online') {
+      return;
+    }
+
+    flushPendingWrite().catch(() => {});
+
+    if (activeRepoAliasRef.current) {
+      loadState({ repoAlias: activeRepoAliasRef.current }).catch(() => {});
+    }
+  }, [connectivityStatus, isAuthenticated, workspaceReady]);
 
   useEffect(() => {
     if (!isAuthenticated || activeSidebarTab !== 'aliases') {
@@ -1175,6 +1523,7 @@ export default function App() {
         method: 'POST',
       });
 
+      setConnectivityStatus('online');
       setPublicKey(data.publicKey);
       setRepoAliasDraft('');
       setRepoDraft('');
@@ -1186,6 +1535,10 @@ export default function App() {
     } catch (error) {
       if (handleUnauthorized(error)) {
         return;
+      }
+
+      if (isNetworkFailure(error)) {
+        setConnectivityStatus(getConnectivityStatusFromError());
       }
 
       setRepoError(error.message);
@@ -1217,11 +1570,24 @@ export default function App() {
         method: 'POST',
       });
 
+      setConnectivityStatus('online');
       setStatus(data.status);
       setTree(data.tree);
+      await workspaceStoreRef.current?.saveRepoSnapshot({
+        repoAlias: activeRepoAliasRef.current,
+        selectedPath: nextPath,
+        status: data.status,
+        tree: data.tree,
+      });
       await loadFile(nextPath, activeRepoAliasRef.current);
     } catch (error) {
       if (handleUnauthorized(error)) {
+        return;
+      }
+
+      if (isNetworkFailure(error)) {
+        setConnectivityStatus(getConnectivityStatusFromError());
+        setSaveError('Offline. New files require a live server connection.');
         return;
       }
 
@@ -1252,10 +1618,22 @@ export default function App() {
         method: 'POST',
       });
 
+      setConnectivityStatus('online');
       setStatus(data.status);
       setTree(data.tree);
+      await workspaceStoreRef.current?.saveRepoSnapshot({
+        repoAlias: activeRepoAliasRef.current,
+        status: data.status,
+        tree: data.tree,
+      });
     } catch (error) {
       if (handleUnauthorized(error)) {
+        return;
+      }
+
+      if (isNetworkFailure(error)) {
+        setConnectivityStatus(getConnectivityStatusFromError());
+        setSaveError('Offline. New folders require a live server connection.');
         return;
       }
 
@@ -1279,10 +1657,22 @@ export default function App() {
         method: 'DELETE',
       });
 
+      setConnectivityStatus('online');
       setStatus(data.status);
       setTree(data.tree);
+      await workspaceStoreRef.current?.saveRepoSnapshot({
+        repoAlias: activeRepoAliasRef.current,
+        status: data.status,
+        tree: data.tree,
+      });
     } catch (error) {
       if (handleUnauthorized(error)) {
+        return;
+      }
+
+      if (isNetworkFailure(error)) {
+        setConnectivityStatus(getConnectivityStatusFromError());
+        setSaveError('Offline. Folder deletion requires a live server connection.');
         return;
       }
 
@@ -1370,10 +1760,6 @@ export default function App() {
 
       await loadRepoAliases();
 
-      if (deletedAlias === activeRepoAliasRef.current) {
-        pendingWriteRef.current = null;
-      }
-
       setEditingAlias('');
       setEditingRepoDraft('');
 
@@ -1405,13 +1791,29 @@ export default function App() {
       return;
     }
 
-    const sequence = ++writeSequenceRef.current;
-    pendingWriteRef.current = {
-      content: nextContent,
-      path: activePath,
-      repoAlias: activeRepoAliasRef.current,
-      sequence,
-    };
+    const updatedAt = new Date().toISOString();
+    workspaceStoreRef.current
+      ?.queueWrite({
+        content: nextContent,
+        filePath: activePath,
+        repoAlias: activeRepoAliasRef.current,
+        updatedAt,
+      })
+      .then(() => {
+        syncPendingWriteCount().catch(() => {});
+      })
+      .catch((error) => {
+        setSaveError(error.message);
+      });
+    workspaceStoreRef.current
+      ?.saveRepoSnapshot({
+        repoAlias: activeRepoAliasRef.current,
+        selectedPath: activePath,
+        status,
+        tree,
+        updatedAt,
+      })
+      .catch(() => {});
     setStatus((currentStatus) =>
       currentStatus
         ? {
@@ -1448,6 +1850,7 @@ export default function App() {
         method: 'POST',
       });
 
+      setConnectivityStatus('online');
       setAuthUser(data.user);
       setAuthReady(true);
       setAuthError('');
@@ -1456,6 +1859,10 @@ export default function App() {
       setConfirmPasswordDraft('');
       await loadSessionState();
     } catch (error) {
+      if (isNetworkFailure(error)) {
+        setConnectivityStatus(getConnectivityStatusFromError());
+      }
+
       setAuthError(error.message);
     } finally {
       setAuthBusy(false);
@@ -1473,6 +1880,8 @@ export default function App() {
       });
     } catch {}
 
+    clearLocalFirstSettings();
+    await workspaceStoreRef.current?.clearAll?.();
     resetWorkspaceState();
     setAuthUser(null);
     setAuthReady(true);
@@ -1531,6 +1940,18 @@ export default function App() {
     }),
     [sidebarWidth, viewportHeight],
   );
+  const syncState = useMemo(
+    () =>
+      deriveSyncState({
+        connectivity: connectivityStatus,
+        pendingWriteCount,
+        repoError,
+        syncingWrites,
+        status,
+      }),
+    [connectivityStatus, pendingWriteCount, repoError, syncingWrites, status],
+  );
+  const remoteActionsEnabled = connectivityStatus === 'online' && repoError === '';
 
   if (appError) {
     return (
@@ -1548,13 +1969,13 @@ export default function App() {
     );
   }
 
-  if (!authReady) {
+  if (!authReady || !workspaceReady) {
     return (
       <main className="app-shell">
         <section className="error-panel">
           <p className="eyebrow">Connecting</p>
           <h1>GitHub Note Sync</h1>
-          <p>Checking the server session and authentication policy…</p>
+          <p>Preparing offline storage and checking the server session…</p>
         </section>
       </main>
     );
@@ -1611,7 +2032,7 @@ export default function App() {
                 ) : null}
                 <h1>{mobileEditorTitle}</h1>
               </div>
-              <SyncBadge compact status={status} />
+              <SyncBadge compact syncState={syncState} />
             </header>
           ) : (
             <header className="pane-header">
@@ -1636,7 +2057,7 @@ export default function App() {
                   </button>
                 ) : null}
                 <span className="user-badge">{authUser.username}</span>
-                <SyncBadge status={status} />
+                <SyncBadge syncState={syncState} />
               </div>
             </header>
           )}
@@ -1647,7 +2068,7 @@ export default function App() {
               {status?.repo ? ` · ${status.repo}` : ''}
               {status?.branch ? ` · ${status.branch}` : ''}
             </span>
-            <span>{repoError || status?.lastSyncMessage}</span>
+            <span>{syncState.detail}</span>
           </div>
 
           <section className="editor-surface">
@@ -1697,7 +2118,13 @@ export default function App() {
           </section>
 
           <footer className="footer-row">
-            <span>{loadingFile ? 'Loading file…' : 'Edits write through to the local clone.'}</span>
+            <span>
+              {loadingFile
+                ? 'Loading file…'
+                : pendingWriteCount > 0
+                  ? `${pendingWriteCount} local edit${pendingWriteCount === 1 ? '' : 's'} queued in IndexedDB.`
+                  : 'Edits write through to the local cache first, then replay to the server.'}
+            </span>
             <span>{saveError}</span>
           </footer>
         </section>
@@ -1773,23 +2200,29 @@ export default function App() {
                   New repo alias
                 </label>
                 <input
-                  className="field-input"
-                  id="repo-alias-input"
-                  onChange={(event) => setRepoAliasDraft(event.target.value)}
-                  placeholder="personal-notes"
-                  value={repoAliasDraft}
-                />
+                className="field-input"
+                disabled={!remoteActionsEnabled}
+                id="repo-alias-input"
+                onChange={(event) => setRepoAliasDraft(event.target.value)}
+                placeholder="personal-notes"
+                value={repoAliasDraft}
+              />
                 <label className="field-label" htmlFor="repo-input">
                   GitHub SSH repo
                 </label>
                 <input
                   className="field-input"
+                  disabled={!remoteActionsEnabled}
                   id="repo-input"
                   onChange={(event) => setRepoDraft(event.target.value)}
                   placeholder="git@github.com:you/notes.git"
                   value={repoDraft}
                 />
-                <button className="solid-button" disabled={registeringRepo} type="submit">
+                <button
+                  className="solid-button"
+                  disabled={!remoteActionsEnabled || registeringRepo}
+                  type="submit"
+                >
                   {registeringRepo ? 'Creating…' : 'Create alias'}
                 </button>
               </form>
@@ -1800,6 +2233,7 @@ export default function App() {
                 </label>
                 <select
                   className="field-input"
+                  disabled={!remoteActionsEnabled}
                   id="edit-alias-select"
                   onChange={(event) => {
                     setEditingAlias(event.target.value);
@@ -1819,6 +2253,7 @@ export default function App() {
                 </label>
                 <input
                   className="field-input"
+                  disabled={!remoteActionsEnabled}
                   id="edit-repo-input"
                   onChange={(event) => setEditingRepoDraft(event.target.value)}
                   placeholder="git@github.com:you/notes.git"
@@ -1873,14 +2308,14 @@ export default function App() {
                 <div className="repo-form-actions">
                   <button
                     className="solid-button"
-                    disabled={!editingAlias || savingAlias || deletingAlias}
+                    disabled={!remoteActionsEnabled || !editingAlias || savingAlias || deletingAlias}
                     type="submit"
                   >
                     {savingAlias ? 'Saving…' : 'Save alias'}
                   </button>
                   <button
                     className="danger-button"
-                    disabled={!editingAlias || savingAlias || deletingAlias}
+                    disabled={!remoteActionsEnabled || !editingAlias || savingAlias || deletingAlias}
                     onClick={handleDeleteAlias}
                     type="button"
                   >
@@ -1892,18 +2327,22 @@ export default function App() {
           )}
 
           <div className="tree-meta">
-            <span>Auto-sync to server every {(status?.syncIntervalMs ?? 30_000) / 1000}s</span>
-            <span>{repoAliases.length} aliases</span>
+            <span>
+              {connectivityStatus === 'online'
+                ? `Sync replay every ${(status?.syncIntervalMs ?? 30_000) / 1000}s`
+                : 'Offline cache active'}
+            </span>
+            <span>{pendingWriteCount} queued</span>
           </div>
 
           <div className="tree-scroll">
             {activeSidebarTab === 'select' && tree ? (
               <TreeNode
                 node={tree}
-                onCreateFile={!activeRepoAlias || repoError !== '' ? null : handleNewFile}
-                onCreateFolder={!activeRepoAlias || repoError !== '' ? null : handleNewFolder}
-                onDeleteFolder={!activeRepoAlias || repoError !== '' ? null : handleDeleteFolder}
-                onRefresh={!activeRepoAlias || repoError !== '' ? null : handleRefreshTree}
+                onCreateFile={!activeRepoAlias || !remoteActionsEnabled ? null : handleNewFile}
+                onCreateFolder={!activeRepoAlias || !remoteActionsEnabled ? null : handleNewFolder}
+                onDeleteFolder={!activeRepoAlias || !remoteActionsEnabled ? null : handleDeleteFolder}
+                onRefresh={!activeRepoAlias || !remoteActionsEnabled ? null : handleRefreshTree}
                 onSelect={handleFileSelect}
                 selectedPath={selectedPath}
               />

@@ -1,6 +1,6 @@
 # GitHub Note Sync Client
 
-The client repository contains the authenticated web app: a login and repo-management shell around the two-pane editor. It talks to the separate server API for session status, login, registration, repo-alias registration, public-key retrieval, file reads, file writes, tree refreshes, and sync requests.
+The client repository contains the authenticated local-first web app: a login and repo-management shell around the two-pane editor. It talks to the separate server API for session status, login, registration, repo-alias registration, public-key retrieval, file reads, file writes, tree refreshes, and sync requests, but it now restores cached repo/file state locally and replays durable pending edits when the API becomes reachable again.
 
 ## Installation
 
@@ -9,6 +9,12 @@ The client repository contains the authenticated web app: a login and repo-manag
 
    ```bash
    npm install
+   ```
+
+3. Run the unit tests:
+
+   ```bash
+   npm test
    ```
 
 ## Usage
@@ -52,14 +58,14 @@ When the client sits behind one or more proxies, it also accepts requests that a
    - a GitHub SSH repo URL such as `git@github.com:you/notes.git`
 8. Copy the generated public key from the client and add it to GitHub.
 9. Repo aliases are private to the signed-in server user. Another user can reuse the same alias name without colliding with yours.
-10. When a repo alias is first opened from the URL, or when the browser is refreshed on that alias, the client performs an implicit force-refresh against the remote repo before starting normal polling.
-11. Editor changes are debounced on the client for 3 seconds while typing, then flushed immediately on blur, tab hide, page unload, file switch, repo-alias switch, or manual sync.
+10. When the app launches at `/`, it restores the last valid repo alias from local storage, hydrates the tree and file view from the local cache, and then refreshes from the server when reachable. Opening an alias no longer performs an implicit force-refresh against the remote repo.
+11. Editor changes are written to IndexedDB first and queued locally per file. The client replays queued writes to the existing `PUT /api/file` endpoint on debounce, blur, tab hide, periodic polling, and reconnect, so reloads and offline restarts keep accepted edits.
 12. Files ending in `.md` open in a lightweight CodeMirror editor with Markdown syntax highlighting (for example, `*emphasis*` and `_emphasis_` render with styled text while the raw markers remain visible), and line numbers are hidden.
 13. On both desktop and mobile layouts, markdown files get a compact header toggle that switches between source editing and rendered GitHub Flavored Markdown preview. The icon indicates the destination view (`#` means go to editor source, `<>` means go to rendered preview). On mobile it appears next to the `<` button.
 14. Mobile keyboard hints are enabled for sentence capitalization/autocorrect in both the Markdown CodeMirror editor and the plain textarea editor.
 15. While the initial tree read is in flight, the client shows a loading state rather than incorrectly claiming the repo is empty.
 16. The right pane is split into tabs:
-   - `Write` for the alias dropdown, file tree, new-file and new-folder icon actions on any directory row, a root-level force-refresh action, empty-folder deletion, a draggable right-pane resizer, and a short configuration pointer to the repo-management tab
+   - `Write` for the alias dropdown, file tree, new-file and new-folder icon actions on any directory row, an online-only manual refresh action, empty-folder deletion, a draggable right-pane resizer, and a short configuration pointer to the repo-management tab
    - `Repos` for creating new aliases, editing existing alias repo URLs, viewing the selected alias deploy key in a read-only box with copy support and GitHub setup link, and deleting aliases after a browser confirmation prompt
 17. New files are created from a basename-only prompt. The UI rejects path separators such as `/` and `\`.
 18. On mobile-width layouts (including Samsung Galaxy S21+ viewport widths), the file tree stacks above the editor. Selecting a file scrolls down to the editor, and a `<` button in the editor header scrolls back to the file tree so another file can be chosen.
@@ -69,10 +75,11 @@ When the client sits behind one or more proxies, it also accepts requests that a
 22. Mobile mode is triggered by a responsive rule that combines narrow viewport width (`max-width: 900px`) with a touch-device fallback (`max-width: 1024px` plus `hover: none` and `pointer: coarse`) so phones still get mobile behavior even when browsers report a wider layout viewport.
 23. The client tracks the visible browser viewport height (`visualViewport.height` with `innerHeight` fallback) and applies it as a CSS variable so the editor pane fills the available window height, including mobile browser UI changes.
 24. On mobile layouts, horizontal gutters are removed so the editor pane touches the screen edges and the editor text box spans the pane width with no left/right inset; rounded corners are preserved for both the pane and the text box.
-25. The production build exposes a Web App Manifest and Service Worker, so Android Chrome can install the app from the browser menu and launch it in app/fullscreen display mode.
+25. The production build exposes a Web App Manifest and Service Worker, so Android Chrome can install the app from the browser menu, relaunch at `/`, and restore the last valid repo alias from local state in app/fullscreen display mode.
 
 If the client and server are on different origins, the server must allow the client origin via `allowedOrigins`.
 The browser client uses the server-managed session cookie (`credentials: include`) so users stay signed in across browser restarts until the session expires or they log out.
+If the browser cannot reach the server but a cached authenticated session exists, the client opens in offline mode, keeps cached files editable, and disables repo-management actions that still require a live API round-trip.
 If you want HTTPS locally, terminate TLS in an external reverse proxy and point the browser at that proxy rather than teaching the client dev server about certificates.
 For longer-lived browser sessions, increase the server `sessionTtlMs` value and keep cookie settings aligned with your deployment topology.
 
@@ -81,7 +88,7 @@ For longer-lived browser sessions, increase the server `sessionTtlMs` value and 
 1. Build and serve the client over HTTPS.
 2. Open the client URL in Android Chrome.
 3. Open the Chrome menu and choose `Install app` (or `Add to Home screen` when Chrome offers install mode).
-4. Launch from the home screen icon. The app uses the manifest `display: "fullscreen"` mode.
+4. Launch from the home screen icon. The app uses the manifest `display: "fullscreen"` mode and restores the last valid repo alias client-side when the manifest opens the app at `/`.
 
 If you only add a plain shortcut without install mode, Chrome can still open it as a browser tab instead of a standalone app window.
 
@@ -171,23 +178,31 @@ That internal preview listener is meant to sit behind your HTTPS reverse proxy; 
 
 ## Architecture
 
-The client is a React app built with Vite. A thin CLI wrapper requires `--server-url=<url>` and injects that value into the build/runtime environment so the UI can call the separate API. The client itself stays HTTP-only at the app-server level; if you want HTTPS locally or in production, terminate TLS in an external reverse proxy so the transport model matches production instead of embedding certificate handling into the app. In local HTTPS testing, a proxy such as Caddy sits in front of both the Vite dev server and the API server and exposes stable HTTPS origins like `https://notes.localhost` and `https://api.notes.localhost`. Because modern Vite rejects unknown `Host` headers by default, the client config now keeps an explicit allowlist for proxied browser hostnames in both `vite dev` and `vite preview`; `notes.internal.asymptoticsecurity.com` is allowed by default, and extra hostnames can be supplied through `VITE_ALLOWED_HOSTS`. A startup guard still refuses to boot the app for plain HTTP browser sessions, but it now checks both the browser URL scheme and a small same-origin request-context endpoint served by Vite, so reverse proxies can mark the original request as secure with `X-Forwarded-Proto: https` while direct HTTP visits to the raw Vite or preview ports remain intentionally unusable. On startup the browser first checks `/api/auth/session` and treats the server session as the source of truth for whether the editor can load at all. Until the user is authenticated, the UI stays on a dedicated auth screen that can register the first user, log in, and log out while keeping the password authority entirely on the server. Browser authentication is cookie-based: login and register requests let the server set the session cookie, and subsequent API calls include that cookie automatically with `credentials: include`. This keeps browser sign-in persistent until logout or server-side expiry (`sessionTtlMs`), without storing bearer tokens in browser storage. Once authenticated, the browser still treats the URL path as the source of truth for the active repo alias, so direct links remain deep-linkable inside that user's alias namespace. When an alias is first activated from the URL, the client first force-refreshes against the remote repo and only then falls back to normal polling, with an explicit loading state while that first tree read is still in flight. It separates repo selection and alias management into tabs in the right pane, renders the repository tree in the write tab, exposes compact file and folder creation icons on every directory row, places a refresh action on the repo row, allows immediate deletion of folders that contain no files, lets the user drag a splitter to resize the sidebar, and exposes the selected alias deploy key in a read-only copyable field with a direct GitHub setup link. The editor remains plain-text-first with the same debounce/flush write pipeline, but now uses a conditional editing surface: `.md` files render in a lightweight CodeMirror instance with Markdown syntax highlighting, line wrapping, hidden line numbers, and mobile keyboard hints for sentence capitalization/autocorrect, while other file types continue to use a native `<textarea>` with matching mobile keyboard hints. For `.md` files, a compact header toggle is available on both desktop and mobile to swap between source editing and rendered GitHub Flavored Markdown preview, and the icon indicates the destination view (`#` goes to source, `<>` goes to preview). On mobile-targeted viewports, the layout becomes a single vertical stack with repository controls first and editor second; selecting a file triggers a smooth scroll into the editor pane, and the editor header stays intentionally minimal with the back-to-files control, markdown toggle when applicable, a clearly reduced filename heading that uses available width before truncating, and a fixed-width sync-state badge so status-label changes do not cause horizontal header shifts. The mobile breakpoint now combines narrow width with a coarse-touch fallback so phones still match mobile behavior when a browser reports a wider layout viewport. The same mobile mode also increases navigation and control sizing while keeping editor text slightly smaller to preserve editing space. To avoid short editor panes when mobile browser chrome expands or collapses, the client continuously syncs a viewport-height CSS variable from `visualViewport.height` (falling back to `innerHeight`) and uses that to size the workspace and editor pane to the visible window. In that mobile mode, horizontal gutters are removed so the editor pane and editor text box use edge-to-edge width while still keeping rounded corners on both elements. For installability and app-style launch on Android, the client ships a manifest (`display: "fullscreen"`), app icon, and service worker registration in production builds.
+The client is a React app built with Vite. A thin CLI wrapper still requires `--server-url=<url>` and injects that value into the build/runtime environment so the UI can call the separate API. The client itself stays HTTP-only at the app-server level; if you want HTTPS locally or in production, terminate TLS in an external reverse proxy so the transport model matches production instead of embedding certificate handling into the app. In local HTTPS testing, a proxy such as Caddy sits in front of both the Vite dev server and the API server and exposes stable HTTPS origins like `https://notes.localhost` and `https://api.notes.localhost`. Because modern Vite rejects unknown `Host` headers by default, the client config keeps an explicit allowlist for proxied browser hostnames in both `vite dev` and `vite preview`; `notes.internal.asymptoticsecurity.com` is allowed by default, and extra hostnames can be supplied through `VITE_ALLOWED_HOSTS`. A startup guard still refuses to boot the app for plain HTTP browser sessions, but it now checks both the browser URL scheme and a small same-origin request-context endpoint served by Vite, so reverse proxies can mark the original request as secure with `X-Forwarded-Proto: https` while direct HTTP visits to the raw Vite or preview ports remain intentionally unusable.
+
+The major client-side design change is that the browser is no longer stateless with respect to the editing workspace. After a successful authenticated load, the client caches a session snapshot, the repo-alias list, and the last-opened alias in local storage, while repo trees, selected files, file contents, and pending writes are cached in IndexedDB. Launching the PWA at `/` restores the last valid repo alias client-side, hydrates the file tree and editor from the local cache first, and then refreshes `/api/bootstrap` and `/api/file` when the API is reachable. If the network is unavailable but a cached authenticated session exists, the client still boots into the editor with the cached workspace instead of failing closed on startup.
+
+The current local-first write path is a compatibility layer over the existing server API. Accepted edits are written to IndexedDB immediately as durable pending writes, the sync badge reflects queued local work, and the client replays those writes to the existing `PUT /api/file` whole-file endpoint on debounce, blur, page hide, polling, and reconnect. Only the latest queued write per file is kept locally, and server acknowledgements are version-checked so an older in-flight request cannot delete a newer local edit. This preserves current server functionality while removing the old implicit `POST /api/refresh` on alias activation. Manual refresh, repo alias mutation, and tree-structure actions still call the server directly and therefore stay available only when the API is reachable.
+
+The UI structure remains the same: repo selection and repo management live in the right pane, the editor stays plain-text-first, `.md` files use a lightweight CodeMirror surface plus an optional rendered preview, and the mobile layout still stacks repository controls above the editor with a compact header and a fixed-width sync badge. The client also continues to track `visualViewport.height` so the visible editor height follows mobile browser chrome changes. For installability and app-style launch on Android, the client ships a manifest (`display: "fullscreen"`), app icon, and service worker registration in production builds.
 
 Design philosophy:
 
-- Keep the browser stateless with respect to Git; the server owns the repository and sync rules.
-- Treat the server-managed session cookie as the browser credential after login.
+- Keep accepted edits durable on-device first, then replay them to the server when connectivity permits.
+- Keep the current server API working during the transition by layering local-first behavior over the existing whole-file endpoints.
+- Keep destructive refresh behavior explicit and manual; never hide it behind repo selection or app relaunch.
+- Keep the URL path as the primary repo identifier, but restore the last valid alias when the PWA launches at `/`.
+- Keep cookie-based auth server-owned while caching only enough session metadata to reopen the workspace offline after a successful online session.
 - Keep passwords and SSH keys out of browser storage.
-- Use the URL path as the active-repo identifier so repo views are deep-linkable within one account.
-- Make repo onboarding explicit: the client asks for a repo alias and repo URL, then shows the public key the user must install in GitHub.
-- Reduce write traffic during active typing without hiding the durability tradeoff.
-- Prefer plain-text editing defaults, while using lightweight editor extensions only where they materially improve readability (for example, Markdown syntax highlighting and optional rendered preview for `.md` files).
+- Make pending local work visible through queue-aware sync status instead of pretending the server is always authoritative in real time.
+- Prefer offline editing of already-cached files and degrade repo-management actions gracefully when the API is unavailable.
+- Prefer plain-text editing defaults, while using lightweight editor extensions only where they materially improve readability.
 - Keep deployment simple by building the client once and running it under a user systemd unit.
 - Keep TLS termination outside the app so local and production topology stay aligned.
 - Keep Vite host validation explicit so proxied browser origins must be intentionally allowed.
 - Refuse to boot the browser app on requests that are neither HTTPS in the browser nor explicitly marked as HTTPS by a trusted proxy.
 - Bake the public HTTPS base URL into the production bundle so browsers never target the internal HTTP app ports.
-- Surface configuration and authentication failures clearly at startup instead of failing silently.
+- Surface configuration and connectivity failures clearly instead of failing silently.
 - Keep mobile editing practical by stacking tree then editor, with explicit scroll navigation between them.
 - Keep mobile UI readable and touch-friendly by scaling type and control sizes on narrow viewports.
 - Keep the mobile editor header minimal so file context and sync state stay visible without wasting vertical space.
