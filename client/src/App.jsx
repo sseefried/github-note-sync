@@ -1648,6 +1648,13 @@ export default function App() {
     setLoadingTree(true);
 
     hydrateRepoFromLocal(activeRepoAlias)
+      .then((hydratedFromLocal) => {
+        if (hydratedFromLocal) {
+          setLoadingTree(false);
+        }
+
+        return hydratedFromLocal;
+      })
       .catch(() => false)
       .finally(() => {
         loadState({ forceReloadFile: true, repoAlias: activeRepoAlias }).catch(() => {});
