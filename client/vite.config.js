@@ -52,8 +52,41 @@ function forwardedHttpsPlugin() {
   };
 }
 
+function precacheManifestPlugin() {
+  const publicPrecachePaths = ['/', '/index.html', '/manifest.webmanifest', '/icons/app-icon.svg'];
+
+  return {
+    name: 'github-note-sync-precache-manifest',
+    generateBundle(_options, bundle) {
+      const precachePaths = new Set(publicPrecachePaths);
+
+      for (const output of Object.values(bundle)) {
+        if (!output?.fileName) {
+          continue;
+        }
+
+        if (output.fileName === 'sw.js' || output.fileName === 'precache-manifest.js') {
+          continue;
+        }
+
+        precachePaths.add(`/${output.fileName}`);
+      }
+
+      this.emitFile({
+        fileName: 'precache-manifest.js',
+        source: `self.__PRECACHE_MANIFEST = ${JSON.stringify(
+          [...precachePaths].sort((left, right) => left.localeCompare(right)),
+          null,
+          2,
+        )};\n`,
+        type: 'asset',
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), forwardedHttpsPlugin()],
+  plugins: [react(), forwardedHttpsPlugin(), precacheManifestPlugin()],
   server: {
     allowedHosts,
     host: '0.0.0.0',

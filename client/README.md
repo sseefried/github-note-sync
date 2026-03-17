@@ -77,6 +77,7 @@ When the client sits behind one or more proxies, it also accepts requests that a
 23. The client tracks the visible browser viewport height (`visualViewport.height` with `innerHeight` fallback) and applies it as a CSS variable so the editor pane fills the available window height, including mobile browser UI changes.
 24. On mobile layouts, horizontal gutters are removed so the editor pane touches the screen edges and the editor text box spans the pane width with no left/right inset; rounded corners are preserved for both the pane and the text box.
 25. The production build exposes a Web App Manifest and Service Worker, so Android Chrome can install the app from the browser menu, relaunch at `/`, and restore the last valid repo alias from local state in app/fullscreen display mode.
+26. The production Service Worker now precaches the built app shell, including the hashed JS/CSS bundles emitted by Vite. That means if Android or Chrome discards the PWA process in the background, a later cold relaunch can still boot offline from the local precache and then restore repo/file/editor state from IndexedDB.
 
 If the client and server are on different origins, the server must allow the client origin via `allowedOrigins`.
 The browser client uses the server-managed session cookie (`credentials: include`) so users stay signed in across browser restarts until the session expires or they log out.
@@ -189,6 +190,8 @@ Conflict handling in this pass is revision-based but still intentionally minimal
 
 The UI structure remains the same: repo selection and repo management live in the right pane, the editor stays plain-text-first, `.md` files use a lightweight CodeMirror surface plus an optional rendered preview, and the mobile layout still stacks repository controls above the editor with a compact header and a fixed-width sync badge. The client also continues to track `visualViewport.height` so the visible editor height follows mobile browser chrome changes. For installability and app-style launch on Android, the client ships a manifest (`display: "fullscreen"`), app icon, and service worker registration in production builds.
 
+The Service Worker is now build-aware instead of hand-maintaining a tiny shell list. During `vite build`, the client emits a `precache-manifest.js` file that lists the current hashed bundles and public assets, and the Service Worker precaches that full set during install. Navigation requests are served from cached `index.html` first while the worker refreshes it in the background, which makes “Android killed the PWA and reopened it offline” behave like a cold local launch instead of a network failure. The API is still not cached as app data; repo trees, file contents, revisions, selected files, and pending ops remain in IndexedDB and are rehydrated by the React app after the shell boots.
+
 Design philosophy:
 
 - Keep accepted edits durable on-device first, then replay them to the server when connectivity permits.
@@ -213,3 +216,4 @@ Design philosophy:
 - Keep editor sizing tied to the live visible viewport so mobile browser UI changes do not shrink the editing area unexpectedly.
 - Keep mobile horizontal layout edge-to-edge for editing density while preserving rounded visual boundaries.
 - Keep mobile launch experience app-like by shipping a manifest/service worker pair for Android Chrome install mode.
+- Treat “browser process was killed and later relaunched offline” as a first-class PWA scenario by precaching the full built shell, not just `index.html`.
