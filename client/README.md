@@ -80,6 +80,7 @@ When the client sits behind one or more proxies, it also accepts requests that a
 26. The production Service Worker now precaches the built app shell, including the hashed JS/CSS bundles emitted by Vite. That means if Android or Chrome discards the PWA process in the background, a later cold relaunch can still boot offline from the local precache and then restore repo/file/editor state from IndexedDB.
 27. Startup no longer waits indefinitely for `/api/auth/session` during cold relaunch. The initial session probe now times out after a short window and falls back to cached authenticated session metadata when available, so Android process eviction plus flaky connectivity does not leave the app stuck on the startup screen.
 28. Repo alias restore is now cache-first for rendering and network-preferred for truth. On startup the client immediately shows aliases recovered from IndexedDB/local storage so the last workspace can hydrate without a blank dropdown, then refreshes `/api/repos` in the background and replaces that list with the authoritative server result when reachable.
+29. The client no longer polls `/api/bootstrap` on a timer while you are editing. Local op replay still runs in the background, but repo/file refresh now happens on startup, reconnect, and explicit refresh-style actions instead of periodic background reloads. This avoids stale file fetches overwriting in-progress typing while merge-conflict support is still not implemented.
 
 If the client and server are on different origins, the server must allow the client origin via `allowedOrigins`.
 The browser client uses the server-managed session cookie (`credentials: include`) so users stay signed in across browser restarts until the session expires or they log out.
@@ -198,6 +199,8 @@ Startup auth is also bounded now. The first `/api/auth/session` request uses a s
 
 Repo alias startup follows the same principle, but without changing the source of truth. The client seeds the alias list from local cache immediately so the last repo can be selected and hydrated without waiting on `/api/repos`, then still asks the server for the canonical alias list and replaces the cached view with that network result as soon as it arrives.
 
+Because merge-aware conflict handling has not landed yet, the client also avoids periodic background repo reloads while the editor is open. That means the app still replays local edits on debounce and reconnect, but it does not keep re-fetching the open file on a timer and risking visible content churn.
+
 Design philosophy:
 
 - Keep accepted edits durable on-device first, then replay them to the server when connectivity permits.
@@ -225,3 +228,4 @@ Design philosophy:
 - Treat “browser process was killed and later relaunched offline” as a first-class PWA scenario by precaching the full built shell, not just `index.html`.
 - Bound startup auth checks so cached local state can reopen promptly even when the browser has not yet declared the network request dead.
 - Prefer the network whenever it is reachable, but never make the user wait for obvious cached workspace state before rendering it.
+- Avoid background repo/file polling until merge-conflict semantics exist, so editing remains stable and local input is never surprised by a timer-driven reload.

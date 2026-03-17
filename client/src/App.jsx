@@ -1670,10 +1670,6 @@ export default function App() {
 
     const interval = window.setInterval(() => {
       flushPendingWrite().catch(() => {});
-
-      if (activeRepoAliasRef.current) {
-        loadState({ repoAlias: activeRepoAliasRef.current }).catch(() => {});
-      }
     }, 3_000);
 
     return () => window.clearInterval(interval);
