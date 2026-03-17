@@ -24,6 +24,7 @@ import { deriveSyncState } from './local-first/sync-state.js';
 
 const SERVER_URL = (import.meta.env.VITE_SERVER_URL ?? '').trim().replace(/\/$/, '');
 const CLIENT_WRITE_DEBOUNCE_MS = 3_000;
+const SESSION_STARTUP_TIMEOUT_MS = 3_000;
 const PATH_SEPARATOR_PATTERN = /[\\/]/;
 const DEFAULT_SIDEBAR_WIDTH = 360;
 const MIN_SIDEBAR_WIDTH = 280;
@@ -44,27 +45,44 @@ class ApiError extends Error {
 
 async function fetchJson(url, options = {}) {
   const headers = new Headers(options.headers ?? {});
+  const timeoutMs =
+    Number.isFinite(options.timeoutMs) && options.timeoutMs > 0 ? options.timeoutMs : 0;
+  const controller =
+    timeoutMs > 0 && typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timeoutId =
+    controller !== null
+      ? window.setTimeout(() => {
+          controller.abort(new Error(`Request timed out after ${timeoutMs}ms.`));
+        }, timeoutMs)
+      : null;
 
   if (options.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
 
-  const response = await fetch(`${SERVER_URL}${url}`, {
-    credentials: 'include',
-    ...options,
-    headers,
-  });
+  try {
+    const response = await fetch(`${SERVER_URL}${url}`, {
+      credentials: 'include',
+      ...options,
+      headers,
+      signal: controller?.signal,
+    });
 
-  const contentType = response.headers.get('content-type') ?? '';
-  const data = contentType.includes('application/json')
-    ? await response.json()
-    : { error: await response.text() };
+    const contentType = response.headers.get('content-type') ?? '';
+    const data = contentType.includes('application/json')
+      ? await response.json()
+      : { error: await response.text() };
 
-  if (!response.ok) {
-    throw new ApiError(data.error ?? 'Request failed.', response.status, data);
+    if (!response.ok) {
+      throw new ApiError(data.error ?? 'Request failed.', response.status, data);
+    }
+
+    return data;
+  } finally {
+    if (timeoutId !== null) {
+      window.clearTimeout(timeoutId);
+    }
   }
-
-  return data;
 }
 
 function isNetworkFailure(error) {
@@ -613,7 +631,9 @@ export default function App() {
 
   async function loadSessionState() {
     try {
-      const data = await fetchJson('/api/auth/session');
+      const data = await fetchJson('/api/auth/session', {
+        timeoutMs: SESSION_STARTUP_TIMEOUT_MS,
+      });
 
       setConnectivityStatus('online');
       setCachedSessionState({
