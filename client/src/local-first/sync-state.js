@@ -3,12 +3,19 @@ function pluralize(count, singular, plural = `${singular}s`) {
 }
 
 export function deriveSyncState({
+  blockedConflictCount = 0,
   connectivity = 'online',
+  pendingOperationCount,
   pendingWriteCount = 0,
   repoError = '',
+  syncingOperations,
   syncingWrites = false,
   status = null,
 }) {
+  const localPendingCount =
+    typeof pendingOperationCount === 'number' ? pendingOperationCount : pendingWriteCount;
+  const localSyncing = typeof syncingOperations === 'boolean' ? syncingOperations : syncingWrites;
+
   if (repoError) {
     return {
       badgeStatus: 'remote_error',
@@ -17,13 +24,21 @@ export function deriveSyncState({
     };
   }
 
+  if (blockedConflictCount > 0) {
+    return {
+      badgeStatus: 'conflict',
+      badgeLabel: 'Conflict',
+      detail: `${pluralize(blockedConflictCount, 'conflict')} need manual resolution before sync can continue.`,
+    };
+  }
+
   if (connectivity === 'offline') {
     return {
       badgeStatus: 'offline',
       badgeLabel: 'Offline',
       detail:
-        pendingWriteCount > 0
-          ? `${pluralize(pendingWriteCount, 'local edit')} waiting to sync.`
+        localPendingCount > 0
+          ? `${pluralize(localPendingCount, 'local edit')} waiting to sync.`
           : 'Offline. Cached notes remain editable.',
     };
   }
@@ -33,28 +48,28 @@ export function deriveSyncState({
       badgeStatus: 'remote_error',
       badgeLabel: 'Remote',
       detail:
-        pendingWriteCount > 0
-          ? `${pluralize(pendingWriteCount, 'local edit')} waiting for the server.`
+        localPendingCount > 0
+          ? `${pluralize(localPendingCount, 'local edit')} waiting for the server.`
           : 'The server is unreachable right now.',
     };
   }
 
-  if (syncingWrites) {
+  if (localSyncing) {
     return {
       badgeStatus: 'syncing',
       badgeLabel: 'Syncing',
       detail:
-        pendingWriteCount > 0
-          ? `Syncing ${pluralize(pendingWriteCount, 'local edit')}.`
+        localPendingCount > 0
+          ? `Syncing ${pluralize(localPendingCount, 'local edit')}.`
           : status?.lastSyncMessage ?? 'Syncing with the server.',
     };
   }
 
-  if (pendingWriteCount > 0) {
+  if (localPendingCount > 0) {
     return {
       badgeStatus: 'pending_local',
       badgeLabel: 'Local',
-      detail: `${pluralize(pendingWriteCount, 'local edit')} queued for sync.`,
+      detail: `${pluralize(localPendingCount, 'local edit')} queued for sync.`,
     };
   }
 

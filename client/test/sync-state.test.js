@@ -2,10 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { deriveSyncState } from '../src/local-first/sync-state.js';
 
+test('deriveSyncState surfaces blocked conflicts before normal sync progress', () => {
+  const syncState = deriveSyncState({
+    blockedConflictCount: 2,
+    connectivity: 'online',
+    pendingOperationCount: 1,
+  });
+
+  assert.equal(syncState.badgeStatus, 'conflict');
+  assert.match(syncState.detail, /2 conflicts need manual resolution/i);
+});
+
 test('deriveSyncState surfaces offline local edits first', () => {
   const syncState = deriveSyncState({
     connectivity: 'offline',
-    pendingWriteCount: 2,
+    pendingOperationCount: 2,
   });
 
   assert.equal(syncState.badgeStatus, 'offline');
@@ -15,7 +26,7 @@ test('deriveSyncState surfaces offline local edits first', () => {
 test('deriveSyncState reports queued local edits while online', () => {
   const syncState = deriveSyncState({
     connectivity: 'online',
-    pendingWriteCount: 1,
+    pendingOperationCount: 1,
     status: { lastSyncStatus: 'ready' },
   });
 
@@ -26,7 +37,7 @@ test('deriveSyncState reports queued local edits while online', () => {
 test('deriveSyncState falls back to the last known synced server state', () => {
   const syncState = deriveSyncState({
     connectivity: 'online',
-    pendingWriteCount: 0,
+    pendingOperationCount: 0,
     status: {
       lastSyncMessage: 'Pushed local edits to origin/main.',
       lastSyncStatus: 'pushed',

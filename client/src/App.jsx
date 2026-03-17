@@ -19,6 +19,7 @@ import {
   getRepoAliasFromPathname,
   resolveInitialRepoAlias,
 } from './local-first/route-state.js';
+import { createReplacePatchOperations } from './local-first/patch-ops.js';
 import { deriveSyncState } from './local-first/sync-state.js';
 
 const SERVER_URL = (import.meta.env.VITE_SERVER_URL ?? '').trim().replace(/\/$/, '');
@@ -33,9 +34,10 @@ const MOBILE_LAYOUT_QUERY =
   '(max-width: 900px), ((max-width: 1024px) and (hover: none) and (pointer: coarse))';
 
 class ApiError extends Error {
-  constructor(message, status) {
+  constructor(message, status, payload = null) {
     super(message);
     this.name = 'ApiError';
+    this.payload = payload;
     this.status = status;
   }
 }
@@ -59,7 +61,7 @@ async function fetchJson(url, options = {}) {
     : { error: await response.text() };
 
   if (!response.ok) {
-    throw new ApiError(data.error ?? 'Request failed.', response.status);
+    throw new ApiError(data.error ?? 'Request failed.', response.status, data);
   }
 
   return data;
@@ -522,8 +524,9 @@ export default function App() {
   const [connectivityStatus, setConnectivityStatus] = useState(() =>
     getConnectivityStatusFromNavigator(),
   );
-  const [pendingWriteCount, setPendingWriteCount] = useState(0);
-  const [syncingWrites, setSyncingWrites] = useState(false);
+  const [blockedConflictCount, setBlockedConflictCount] = useState(0);
+  const [pendingOperationCount, setPendingOperationCount] = useState(0);
+  const [syncingOperations, setSyncingOperations] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     if (typeof window === 'undefined') {
       return DEFAULT_SIDEBAR_WIDTH;
@@ -549,7 +552,7 @@ export default function App() {
   const connectivityStatusRef = useRef(getConnectivityStatusFromNavigator());
   const flushPendingWriteRef = useRef(null);
   const flushTimerRef = useRef(null);
-  const syncingWritesRef = useRef(false);
+  const syncingOperationsRef = useRef(false);
   const workspaceStoreRef = useRef(null);
   const resizeCleanupRef = useRef(null);
 
@@ -597,8 +600,9 @@ export default function App() {
     setCopyStatus('');
     setEditingAlias('');
     setEditingRepoDraft('');
-    setPendingWriteCount(0);
-    setSyncingWrites(false);
+    setBlockedConflictCount(0);
+    setPendingOperationCount(0);
+    setSyncingOperations(false);
     setShowMarkdownPreview(false);
 
     if (flushTimerRef.current) {
@@ -696,8 +700,8 @@ export default function App() {
   }, [connectivityStatus]);
 
   useEffect(() => {
-    syncingWritesRef.current = syncingWrites;
-  }, [syncingWrites]);
+    syncingOperationsRef.current = syncingOperations;
+  }, [syncingOperations]);
 
   useEffect(() => {
     function handlePopState() {
@@ -719,7 +723,12 @@ export default function App() {
         }
 
         workspaceStoreRef.current = workspaceStore;
-        setPendingWriteCount(await workspaceStore.countPendingWrites());
+        const [nextPendingOperationCount, nextBlockedConflictCount] = await Promise.all([
+          workspaceStore.countPendingOperations(),
+          workspaceStore.countBlockedConflicts(),
+        ]);
+        setPendingOperationCount(nextPendingOperationCount);
+        setBlockedConflictCount(nextBlockedConflictCount);
         setWorkspaceReady(true);
       })
       .catch(() => {
@@ -788,17 +797,103 @@ export default function App() {
     return () => window.removeEventListener('resize', handleWindowResize);
   }, []);
 
-  async function syncPendingWriteCount() {
-    const workspaceStore = workspaceStoreRef.current;
-
+  async function syncOperationCounts(workspaceStore = workspaceStoreRef.current) {
     if (!workspaceStore) {
-      setPendingWriteCount(0);
-      return 0;
+      setPendingOperationCount(0);
+      setBlockedConflictCount(0);
+      return {
+        blockedConflictCount: 0,
+        pendingOperationCount: 0,
+      };
     }
 
-    const nextPendingWriteCount = await workspaceStore.countPendingWrites();
-    setPendingWriteCount(nextPendingWriteCount);
-    return nextPendingWriteCount;
+    const [nextPendingOperationCount, nextBlockedConflictCount] = await Promise.all([
+      workspaceStore.countPendingOperations(),
+      workspaceStore.countBlockedConflicts(),
+    ]);
+
+    setPendingOperationCount(nextPendingOperationCount);
+    setBlockedConflictCount(nextBlockedConflictCount);
+
+    return {
+      blockedConflictCount: nextBlockedConflictCount,
+      pendingOperationCount: nextPendingOperationCount,
+    };
+  }
+
+  async function preparePendingOperation(repoAlias, filePath) {
+    const workspaceStore = workspaceStoreRef.current;
+
+    if (!workspaceStore || !repoAlias || !filePath) {
+      return null;
+    }
+
+    const [fileSnapshot, currentOperation] = await Promise.all([
+      workspaceStore.getFileSnapshot(repoAlias, filePath),
+      workspaceStore.getPendingOperation(repoAlias, filePath),
+    ]);
+
+    if (!fileSnapshot) {
+      await workspaceStore.clearPendingOperation(repoAlias, filePath);
+      await syncOperationCounts(workspaceStore);
+      return null;
+    }
+
+    if (fileSnapshot.content === fileSnapshot.serverContent) {
+      await workspaceStore.clearPendingOperation(repoAlias, filePath);
+      await syncOperationCounts(workspaceStore);
+      return null;
+    }
+
+    if (currentOperation?.status === 'sent' || currentOperation?.status === 'blocked_invalid') {
+      await syncOperationCounts(workspaceStore);
+      return currentOperation;
+    }
+
+    if (
+      currentOperation?.status === 'blocked_conflict' &&
+      currentOperation.targetContent === fileSnapshot.content
+    ) {
+      await syncOperationCounts(workspaceStore);
+      return currentOperation;
+    }
+
+    const updatedAt = new Date().toISOString();
+    let nextOperation = null;
+
+    if (typeof fileSnapshot.revision !== 'string' || fileSnapshot.revision.trim() === '') {
+      nextOperation = await workspaceStore.upsertPendingOperation({
+        filePath,
+        kind: 'legacy_full_content',
+        payload: null,
+        repoAlias,
+        status: 'pending',
+        targetContent: fileSnapshot.content,
+        updatedAt,
+      });
+    } else {
+      const patchOps = createReplacePatchOperations(fileSnapshot.serverContent, fileSnapshot.content);
+
+      if (patchOps.length === 0) {
+        await workspaceStore.clearPendingOperation(repoAlias, filePath);
+        await syncOperationCounts(workspaceStore);
+        return null;
+      }
+
+      nextOperation = await workspaceStore.upsertPendingOperation({
+        baseRevision: fileSnapshot.revision,
+        filePath,
+        kind: 'patch',
+        payload: { ops: patchOps },
+        repoAlias,
+        status: 'pending',
+        targetContent: fileSnapshot.content,
+        updatedAt,
+      });
+    }
+
+    await syncOperationCounts(workspaceStore);
+    return nextOperation;
   }
 
   async function flushPendingWrite({ keepalive = false } = {}) {
@@ -809,7 +904,7 @@ export default function App() {
 
     const workspaceStore = workspaceStoreRef.current;
 
-    if (!workspaceStore || syncingWritesRef.current || !isAuthenticated) {
+    if (!workspaceStore || syncingOperationsRef.current || !isAuthenticated) {
       return;
     }
 
@@ -817,56 +912,195 @@ export default function App() {
       return;
     }
 
-    const pendingWrites = await workspaceStore.listPendingWrites();
+    const pendingOperations = (await workspaceStore.listPendingOperations()).filter(
+      (operation) => operation.status === 'pending' || operation.status === 'sent',
+    );
 
-    if (pendingWrites.length === 0) {
-      setPendingWriteCount(0);
+    if (pendingOperations.length === 0) {
+      await syncOperationCounts(workspaceStore);
       return;
     }
 
-    syncingWritesRef.current = true;
-    setSyncingWrites(true);
+    syncingOperationsRef.current = true;
+    setSyncingOperations(true);
+
+    let activeOperation = null;
 
     try {
-      for (const pendingWrite of pendingWrites) {
-        const data = await fetchJson('/api/file', {
-          body: JSON.stringify({
-            content: pendingWrite.content,
-            path: pendingWrite.path,
-            repoAlias: pendingWrite.repoAlias,
-          }),
-          keepalive,
-          method: 'PUT',
-        });
+      for (const pendingOperation of pendingOperations) {
+        const currentOperation = await workspaceStore.getPendingOperation(
+          pendingOperation.repoAlias,
+          pendingOperation.path,
+        );
+
+        if (
+          !currentOperation ||
+          currentOperation.opId !== pendingOperation.opId ||
+          (currentOperation.status !== 'pending' && currentOperation.status !== 'sent')
+        ) {
+          continue;
+        }
+
+        activeOperation =
+          currentOperation.status === 'pending'
+            ? await workspaceStore.markOperationSent(
+                currentOperation.repoAlias,
+                currentOperation.path,
+              )
+            : currentOperation;
+
+        if (!activeOperation) {
+          continue;
+        }
+
+        let data = null;
+
+        if (activeOperation.kind === 'legacy_full_content') {
+          data = await fetchJson('/api/file', {
+            body: JSON.stringify({
+              content: activeOperation.targetContent,
+              path: activeOperation.path,
+              repoAlias: activeOperation.repoAlias,
+            }),
+            keepalive,
+            method: 'PUT',
+          });
+
+          const serverFileState = await fetchJson(
+            `/api/file?repoAlias=${encodeURIComponent(activeOperation.repoAlias)}&path=${encodeURIComponent(activeOperation.path)}`,
+          );
+
+          await workspaceStore.acknowledgeOperation({
+            content: serverFileState.content,
+            filePath: activeOperation.path,
+            opId: activeOperation.opId,
+            repoAlias: activeOperation.repoAlias,
+            revision: serverFileState.revision ?? null,
+          });
+        } else if (activeOperation.kind === 'patch') {
+          data = await fetchJson('/api/ops', {
+            body: JSON.stringify({
+              ops: [
+                {
+                  baseRevision: activeOperation.baseRevision,
+                  kind: activeOperation.kind,
+                  opId: activeOperation.opId,
+                  path: activeOperation.path,
+                  payload: activeOperation.payload,
+                },
+              ],
+              repoAlias: activeOperation.repoAlias,
+            }),
+            keepalive,
+            method: 'POST',
+          });
+
+          const outcome =
+            data.outcomes?.find((entry) => entry.opId === activeOperation.opId) ?? data.outcomes?.[0];
+
+          if (outcome?.status === 'applied' || outcome?.status === 'duplicate') {
+            await workspaceStore.acknowledgeOperation({
+              content: activeOperation.targetContent,
+              filePath: activeOperation.path,
+              opId: activeOperation.opId,
+              repoAlias: activeOperation.repoAlias,
+              revision:
+                typeof outcome?.revision === 'string'
+                  ? outcome.revision
+                  : activeOperation.baseRevision ?? null,
+            });
+          } else if (outcome?.status === 'invalid') {
+            await workspaceStore.markOperationError(activeOperation.repoAlias, activeOperation.path, {
+              lastError: 'The server rejected a local patch.',
+              status: 'blocked_invalid',
+            });
+            setSaveError('The server rejected a local patch. Refresh the file before retrying.');
+            activeOperation = null;
+            continue;
+          } else {
+            throw new Error('The server returned an unknown op result.');
+          }
+        } else {
+          await workspaceStore.markOperationError(activeOperation.repoAlias, activeOperation.path, {
+            lastError: `Unsupported local operation kind: ${activeOperation.kind}`,
+            status: 'blocked_invalid',
+          });
+          setSaveError(`Unsupported local operation kind: ${activeOperation.kind}`);
+          activeOperation = null;
+          continue;
+        }
 
         setConnectivityStatus('online');
-        await workspaceStore.acknowledgeWrite({
-          content: pendingWrite.content,
-          filePath: pendingWrite.path,
-          repoAlias: pendingWrite.repoAlias,
-          writeId: pendingWrite.writeId,
-        });
+        setSaveError('');
 
-        if (pendingWrite.repoAlias === activeRepoAliasRef.current) {
+        if (activeOperation.repoAlias === activeRepoAliasRef.current) {
           setStatus(data.status);
         }
+
+        await preparePendingOperation(activeOperation.repoAlias, activeOperation.path);
+        activeOperation = null;
       }
     } catch (error) {
       if (handleUnauthorized(error)) {
         return;
       }
 
-      if (isNetworkFailure(error)) {
+      if (
+        error instanceof ApiError &&
+        error.status === 409 &&
+        activeOperation
+      ) {
+        if (
+          typeof error.payload?.currentContent === 'string' &&
+          typeof error.payload?.currentRevision === 'string'
+        ) {
+          await workspaceStore.saveServerFileSnapshot({
+            content: error.payload.currentContent,
+            filePath: activeOperation.path,
+            repoAlias: activeOperation.repoAlias,
+            revision: error.payload.currentRevision,
+          });
+        }
+
+        await workspaceStore.blockOperationConflict(
+          activeOperation.repoAlias,
+          activeOperation.path,
+          error.payload ?? null,
+        );
+        setSaveError(
+          `Conflict detected in ${activeOperation.path}. Edit again to retry against the latest server version.`,
+        );
+        setStatus((currentStatus) =>
+          currentStatus
+            ? {
+                ...currentStatus,
+                lastSyncMessage: `Conflict detected in ${activeOperation.path}.`,
+                lastSyncStatus: 'error',
+              }
+            : currentStatus,
+        );
+      } else if (isNetworkFailure(error)) {
+        if (activeOperation) {
+          await workspaceStore.markOperationError(activeOperation.repoAlias, activeOperation.path, {
+            lastError: error.message,
+            status: 'pending',
+          });
+        }
         setConnectivityStatus(getConnectivityStatusFromError());
       } else {
+        if (activeOperation) {
+          await workspaceStore.markOperationError(activeOperation.repoAlias, activeOperation.path, {
+            lastError: error.message,
+            status: 'pending',
+          });
+        }
         setSaveError(error.message);
+        throw error;
       }
-
-      throw error;
     } finally {
-      syncingWritesRef.current = false;
-      setSyncingWrites(false);
-      await syncPendingWriteCount();
+      syncingOperationsRef.current = false;
+      setSyncingOperations(false);
+      await syncOperationCounts(workspaceStore);
     }
   }
 
@@ -1054,9 +1288,7 @@ export default function App() {
       return true;
     }
 
-    const pendingWrite = await workspaceStore.getPendingWrite(repoAlias, nextSelectedPath);
-    const fileSnapshot =
-      pendingWrite ?? (await workspaceStore.getFileSnapshot(repoAlias, nextSelectedPath));
+    const fileSnapshot = await workspaceStore.getFileSnapshot(repoAlias, nextSelectedPath);
 
     setSelectedPath(nextSelectedPath);
     setContent(fileSnapshot?.content ?? '');
@@ -1079,15 +1311,6 @@ export default function App() {
     setSaveError('');
 
     try {
-      const pendingWrite = await workspaceStore?.getPendingWrite(repoAlias, path);
-
-      if (pendingWrite) {
-        setContent(pendingWrite.content);
-        setSelectedPath(path);
-        await workspaceStore?.rememberSelectedPath(repoAlias, path);
-        return;
-      }
-
       if (preferLocal) {
         const cachedFileSnapshot = await workspaceStore?.getFileSnapshot(repoAlias, path);
 
@@ -1103,17 +1326,15 @@ export default function App() {
       );
 
       setConnectivityStatus('online');
-      setContent(data.content);
       setSelectedPath(path);
-      await Promise.all([
-        workspaceStore?.rememberSelectedPath(repoAlias, path),
-        workspaceStore?.saveFileSnapshot({
-          content: data.content,
-          filePath: path,
-          origin: 'server',
-          repoAlias,
-        }),
-      ]);
+      const savedSnapshot = await workspaceStore?.saveServerFileSnapshot({
+        content: data.content,
+        filePath: path,
+        repoAlias,
+        revision: data.revision,
+      });
+      setContent(savedSnapshot?.content ?? data.content);
+      await workspaceStore?.rememberSelectedPath(repoAlias, path);
     } catch (error) {
       if (handleUnauthorized(error)) {
         return;
@@ -1122,9 +1343,7 @@ export default function App() {
       if (isNetworkFailure(error)) {
         setConnectivityStatus(getConnectivityStatusFromError());
 
-        const cachedFileSnapshot =
-          (await workspaceStore?.getPendingWrite(repoAlias, path)) ??
-          (await workspaceStore?.getFileSnapshot(repoAlias, path));
+        const cachedFileSnapshot = await workspaceStore?.getFileSnapshot(repoAlias, path);
 
         if (cachedFileSnapshot) {
           setContent(cachedFileSnapshot.content);
@@ -1188,10 +1407,8 @@ export default function App() {
         nextSelectedPath &&
         (forceReloadFile || stateChanged || nextSelectedPath !== selectedPathRef.current)
       ) {
-        const pendingWrite = await workspaceStore?.getPendingWrite(repoAlias, nextSelectedPath);
-
         await loadFile(nextSelectedPath, repoAlias, {
-          preferLocal: Boolean(pendingWrite),
+          preferLocal: true,
         });
       } else if (!nextSelectedPath) {
         setSelectedPath(null);
@@ -1793,14 +2010,14 @@ export default function App() {
 
     const updatedAt = new Date().toISOString();
     workspaceStoreRef.current
-      ?.queueWrite({
+      ?.saveLocalFileContent({
         content: nextContent,
         filePath: activePath,
         repoAlias: activeRepoAliasRef.current,
         updatedAt,
       })
-      .then(() => {
-        syncPendingWriteCount().catch(() => {});
+      .then(async () => {
+        await preparePendingOperation(activeRepoAliasRef.current, activePath);
       })
       .catch((error) => {
         setSaveError(error.message);
@@ -1943,13 +2160,14 @@ export default function App() {
   const syncState = useMemo(
     () =>
       deriveSyncState({
+        blockedConflictCount,
         connectivity: connectivityStatus,
-        pendingWriteCount,
+        pendingOperationCount,
         repoError,
-        syncingWrites,
+        syncingOperations,
         status,
       }),
-    [connectivityStatus, pendingWriteCount, repoError, syncingWrites, status],
+    [blockedConflictCount, connectivityStatus, pendingOperationCount, repoError, syncingOperations, status],
   );
   const remoteActionsEnabled = connectivityStatus === 'online' && repoError === '';
 
@@ -2121,8 +2339,10 @@ export default function App() {
             <span>
               {loadingFile
                 ? 'Loading file…'
-                : pendingWriteCount > 0
-                  ? `${pendingWriteCount} local edit${pendingWriteCount === 1 ? '' : 's'} queued in IndexedDB.`
+                : blockedConflictCount > 0
+                  ? `${blockedConflictCount} conflict${blockedConflictCount === 1 ? '' : 's'} blocked until you refresh and resolve them.`
+                  : pendingOperationCount > 0
+                    ? `${pendingOperationCount} local edit${pendingOperationCount === 1 ? '' : 's'} queued in IndexedDB.`
                   : 'Edits write through to the local cache first, then replay to the server.'}
             </span>
             <span>{saveError}</span>
@@ -2332,7 +2552,11 @@ export default function App() {
                 ? `Sync replay every ${(status?.syncIntervalMs ?? 30_000) / 1000}s`
                 : 'Offline cache active'}
             </span>
-            <span>{pendingWriteCount} queued</span>
+            <span>
+              {blockedConflictCount > 0
+                ? `${blockedConflictCount} conflict${blockedConflictCount === 1 ? '' : 's'}`
+                : `${pendingOperationCount} queued`}
+            </span>
           </div>
 
           <div className="tree-scroll">

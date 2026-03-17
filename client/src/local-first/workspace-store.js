@@ -19,7 +19,7 @@ function makeTimestamp() {
   return new Date().toISOString();
 }
 
-function createWriteId() {
+function createOperationId() {
   if (typeof globalThis.crypto?.randomUUID === 'function') {
     return globalThis.crypto.randomUUID();
   }
@@ -31,40 +31,68 @@ export function createFileRecordId(repoAlias, filePath) {
   return `${normalizeRepoAlias(repoAlias)}:${normalizeFilePath(filePath)}`;
 }
 
-function comparePendingWrites(left, right) {
-  const timestampComparison = String(left.updatedAt).localeCompare(String(right.updatedAt));
+function compareOperations(left, right) {
+  const timestampComparison = String(left.createdAt ?? '').localeCompare(String(right.createdAt ?? ''));
 
   if (timestampComparison !== 0) {
     return timestampComparison;
   }
 
-  return left.id.localeCompare(right.id);
+  return String(left.id ?? '').localeCompare(String(right.id ?? ''));
 }
 
-export function createPendingWrite({
-  content,
-  filePath,
-  repoAlias,
-  updatedAt = makeTimestamp(),
-  writeId = createWriteId(),
-}) {
-  const normalizedRepoAlias = normalizeRepoAlias(repoAlias);
-  const normalizedFilePath = normalizeFilePath(filePath);
+function normalizeLegacyFileSnapshot(record) {
+  if (!record || typeof record !== 'object') {
+    return null;
+  }
+
+  if (typeof record.serverContent === 'string') {
+    return record;
+  }
 
   return {
-    content,
-    id: createFileRecordId(normalizedRepoAlias, normalizedFilePath),
-    path: normalizedFilePath,
-    repoAlias: normalizedRepoAlias,
-    updatedAt,
-    writeId,
+    ...record,
+    content: typeof record.content === 'string' ? record.content : '',
+    revision: typeof record.revision === 'string' ? record.revision : null,
+    serverContent: typeof record.content === 'string' ? record.content : '',
   };
 }
 
-export function upsertPendingWriteRecords(existingWrites, nextWrite) {
-  return [...existingWrites.filter((write) => write.id !== nextWrite.id), nextWrite].sort(
-    comparePendingWrites,
-  );
+function normalizeLegacyPendingOperation(record) {
+  if (!record || typeof record !== 'object') {
+    return null;
+  }
+
+  if (typeof record.kind === 'string') {
+    return record;
+  }
+
+  if (
+    typeof record.content === 'string' &&
+    typeof record.path === 'string' &&
+    typeof record.repoAlias === 'string'
+  ) {
+    return {
+      attemptCount: Number.isInteger(record.attemptCount) ? record.attemptCount : 0,
+      baseRevision: typeof record.baseRevision === 'string' ? record.baseRevision : null,
+      createdAt: typeof record.updatedAt === 'string' ? record.updatedAt : makeTimestamp(),
+      id: createFileRecordId(record.repoAlias, record.path),
+      kind: 'legacy_full_content',
+      lastError: typeof record.lastError === 'string' ? record.lastError : '',
+      opId:
+        typeof record.writeId === 'string' && record.writeId.trim() !== ''
+          ? record.writeId
+          : createOperationId(),
+      path: record.path,
+      payload: null,
+      repoAlias: record.repoAlias,
+      status: 'pending',
+      targetContent: record.content,
+      updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : makeTimestamp(),
+    };
+  }
+
+  return record;
 }
 
 function openIndexedDb() {
@@ -141,9 +169,7 @@ function createIndexedDbAdapter(database) {
 }
 
 export function createMemoryWorkspaceAdapter() {
-  const stores = new Map(
-    STORE_NAMES.map((storeName) => [storeName, new Map()]),
-  );
+  const stores = new Map(STORE_NAMES.map((storeName) => [storeName, new Map()]));
 
   return {
     async clear(storeName) {
@@ -160,8 +186,7 @@ export function createMemoryWorkspaceAdapter() {
       return [...(stores.get(storeName)?.values() ?? [])];
     },
     async put(storeName, value) {
-      const key =
-        storeName === STORE_REPOS ? value.repoAlias : value.id;
+      const key = storeName === STORE_REPOS ? value.repoAlias : value.id;
       stores.get(storeName)?.set(key, value);
     },
   };
@@ -231,115 +256,242 @@ export function createWorkspaceStoreWithAdapter(adapter) {
 
   async function getFileSnapshot(repoAlias, filePath) {
     const recordId = createFileRecordId(repoAlias, filePath);
-    return recordId.includes(':') ? adapter.get(STORE_FILES, recordId) : null;
+    const record = recordId.includes(':') ? await adapter.get(STORE_FILES, recordId) : null;
+    return normalizeLegacyFileSnapshot(record);
   }
 
-  async function saveFileSnapshot({
+  async function saveServerFileSnapshot({
     content,
     filePath,
-    origin = 'server',
+    repoAlias,
+    revision,
+    updatedAt = makeTimestamp(),
+  }) {
+    const normalizedRepoAlias = normalizeRepoAlias(repoAlias);
+    const normalizedFilePath = normalizeFilePath(filePath);
+
+    if (!normalizedRepoAlias || !normalizedFilePath || typeof content !== 'string') {
+      return null;
+    }
+
+    const currentSnapshot = await getFileSnapshot(normalizedRepoAlias, normalizedFilePath);
+    const hasLocalChanges =
+      currentSnapshot &&
+      currentSnapshot.content !== currentSnapshot.serverContent;
+
+    const nextSnapshot = {
+      content: hasLocalChanges ? currentSnapshot.content : content,
+      id: createFileRecordId(normalizedRepoAlias, normalizedFilePath),
+      path: normalizedFilePath,
+      repoAlias: normalizedRepoAlias,
+      revision: typeof revision === 'string' ? revision : currentSnapshot?.revision ?? null,
+      serverContent: content,
+      updatedAt,
+    };
+
+    await adapter.put(STORE_FILES, nextSnapshot);
+    return nextSnapshot;
+  }
+
+  async function saveLocalFileContent({
+    content,
+    filePath,
     repoAlias,
     updatedAt = makeTimestamp(),
   }) {
     const normalizedRepoAlias = normalizeRepoAlias(repoAlias);
     const normalizedFilePath = normalizeFilePath(filePath);
 
-    if (!normalizedRepoAlias || !normalizedFilePath) {
+    if (!normalizedRepoAlias || !normalizedFilePath || typeof content !== 'string') {
       return null;
     }
 
-    const record = {
+    const currentSnapshot = await getFileSnapshot(normalizedRepoAlias, normalizedFilePath);
+    const nextSnapshot = {
       content,
       id: createFileRecordId(normalizedRepoAlias, normalizedFilePath),
-      origin,
       path: normalizedFilePath,
       repoAlias: normalizedRepoAlias,
+      revision: currentSnapshot?.revision ?? null,
+      serverContent:
+        typeof currentSnapshot?.serverContent === 'string'
+          ? currentSnapshot.serverContent
+          : currentSnapshot?.content ?? '',
       updatedAt,
     };
 
-    await adapter.put(STORE_FILES, record);
-    return record;
+    await adapter.put(STORE_FILES, nextSnapshot);
+    return nextSnapshot;
   }
 
-  async function getPendingWrite(repoAlias, filePath) {
+  async function getPendingOperation(repoAlias, filePath) {
     const recordId = createFileRecordId(repoAlias, filePath);
-    return recordId.includes(':') ? adapter.get(STORE_WRITES, recordId) : null;
+    const record = recordId.includes(':') ? await adapter.get(STORE_WRITES, recordId) : null;
+    return normalizeLegacyPendingOperation(record);
   }
 
-  async function listPendingWrites(repoAlias = '') {
-    const normalizedRepoAlias = normalizeRepoAlias(repoAlias);
-    const pendingWrites = await adapter.list(STORE_WRITES);
-
-    return pendingWrites
-      .filter((pendingWrite) =>
-        normalizedRepoAlias === '' ? true : pendingWrite.repoAlias === normalizedRepoAlias,
-      )
-      .sort(comparePendingWrites);
-  }
-
-  async function countPendingWrites(repoAlias = '') {
-    return (await listPendingWrites(repoAlias)).length;
-  }
-
-  async function queueWrite({
-    content,
+  async function upsertPendingOperation({
+    baseRevision,
     filePath,
+    kind,
+    lastError = '',
+    opId = createOperationId(),
+    payload,
     repoAlias,
+    status = 'pending',
+    targetContent,
     updatedAt = makeTimestamp(),
   }) {
-    const pendingWrite = createPendingWrite({
-      content,
-      filePath,
-      repoAlias,
-      updatedAt,
-    });
+    const normalizedRepoAlias = normalizeRepoAlias(repoAlias);
+    const normalizedFilePath = normalizeFilePath(filePath);
 
-    if (!pendingWrite.repoAlias || !pendingWrite.path) {
+    if (!normalizedRepoAlias || !normalizedFilePath || typeof kind !== 'string') {
       return null;
     }
 
-    await Promise.all([
-      adapter.put(STORE_WRITES, pendingWrite),
-      saveFileSnapshot({
-        content,
-        filePath: pendingWrite.path,
-        origin: 'local',
-        repoAlias: pendingWrite.repoAlias,
-        updatedAt,
-      }),
-      rememberSelectedPath(pendingWrite.repoAlias, pendingWrite.path),
-    ]);
+    const currentOperation = await getPendingOperation(normalizedRepoAlias, normalizedFilePath);
+    const nextOperation = {
+      attemptCount:
+        currentOperation?.status === 'pending' && currentOperation.opId === opId
+          ? currentOperation.attemptCount
+          : 0,
+      baseRevision: typeof baseRevision === 'string' ? baseRevision : null,
+      createdAt: currentOperation?.createdAt ?? updatedAt,
+      id: createFileRecordId(normalizedRepoAlias, normalizedFilePath),
+      kind,
+      lastError,
+      opId,
+      path: normalizedFilePath,
+      payload,
+      repoAlias: normalizedRepoAlias,
+      status,
+      targetContent: typeof targetContent === 'string' ? targetContent : '',
+      updatedAt,
+    };
 
-    return pendingWrite;
+    await adapter.put(STORE_WRITES, nextOperation);
+    return nextOperation;
   }
 
-  async function acknowledgeWrite({
+  async function markOperationSent(repoAlias, filePath, updatedAt = makeTimestamp()) {
+    const currentOperation = await getPendingOperation(repoAlias, filePath);
+
+    if (!currentOperation) {
+      return null;
+    }
+
+    const nextOperation = {
+      ...currentOperation,
+      attemptCount: (currentOperation.attemptCount ?? 0) + 1,
+      lastError: '',
+      status: 'sent',
+      updatedAt,
+    };
+
+    await adapter.put(STORE_WRITES, nextOperation);
+    return nextOperation;
+  }
+
+  async function markOperationError(repoAlias, filePath, { lastError, status = 'sent' } = {}) {
+    const currentOperation = await getPendingOperation(repoAlias, filePath);
+
+    if (!currentOperation) {
+      return null;
+    }
+
+    const nextOperation = {
+      ...currentOperation,
+      lastError: typeof lastError === 'string' ? lastError : currentOperation.lastError ?? '',
+      status,
+      updatedAt: makeTimestamp(),
+    };
+
+    await adapter.put(STORE_WRITES, nextOperation);
+    return nextOperation;
+  }
+
+  async function blockOperationConflict(repoAlias, filePath, conflict) {
+    const currentOperation = await getPendingOperation(repoAlias, filePath);
+
+    if (!currentOperation) {
+      return null;
+    }
+
+    const nextOperation = {
+      ...currentOperation,
+      conflict: conflict ?? null,
+      lastError: 'Conflict detected.',
+      status: 'blocked_conflict',
+      updatedAt: makeTimestamp(),
+    };
+
+    await adapter.put(STORE_WRITES, nextOperation);
+    return nextOperation;
+  }
+
+  async function clearPendingOperation(repoAlias, filePath) {
+    const recordId = createFileRecordId(repoAlias, filePath);
+
+    if (!recordId.includes(':')) {
+      return;
+    }
+
+    await adapter.delete(STORE_WRITES, recordId);
+  }
+
+  async function acknowledgeOperation({
     content,
     filePath,
+    opId,
     repoAlias,
-    writeId,
+    revision,
   }) {
-    const currentPendingWrite = await getPendingWrite(repoAlias, filePath);
+    const currentOperation = await getPendingOperation(repoAlias, filePath);
 
-    if (!currentPendingWrite || currentPendingWrite.writeId !== writeId) {
+    if (!currentOperation || currentOperation.opId !== opId) {
       return false;
     }
 
     await Promise.all([
-      adapter.delete(STORE_WRITES, currentPendingWrite.id),
-      saveFileSnapshot({
+      clearPendingOperation(repoAlias, filePath),
+      saveServerFileSnapshot({
         content,
-        filePath: currentPendingWrite.path,
-        origin: 'server',
-        repoAlias: currentPendingWrite.repoAlias,
+        filePath: currentOperation.path,
+        repoAlias: currentOperation.repoAlias,
+        revision,
       }),
     ]);
 
     return true;
   }
 
+  async function listPendingOperations(repoAlias = '') {
+    const normalizedRepoAlias = normalizeRepoAlias(repoAlias);
+    const operations = await adapter.list(STORE_WRITES);
+
+    return operations
+      .map((entry) => normalizeLegacyPendingOperation(entry))
+      .filter(Boolean)
+      .filter((operation) =>
+        normalizedRepoAlias === '' ? true : operation.repoAlias === normalizedRepoAlias,
+      )
+      .sort(compareOperations);
+  }
+
+  async function countPendingOperations(repoAlias = '') {
+    return (
+      await listPendingOperations(repoAlias)
+    ).filter((operation) => operation.status === 'pending' || operation.status === 'sent').length;
+  }
+
+  async function countBlockedConflicts(repoAlias = '') {
+    return (
+      await listPendingOperations(repoAlias)
+    ).filter((operation) => operation.status === 'blocked_conflict').length;
+  }
+
   async function listKnownRepoAliases() {
-    const [repoSnapshots, fileSnapshots, pendingWrites] = await Promise.all([
+    const [repoSnapshots, fileSnapshots, pendingOperations] = await Promise.all([
       adapter.list(STORE_REPOS),
       adapter.list(STORE_FILES),
       adapter.list(STORE_WRITES),
@@ -348,7 +500,7 @@ export function createWorkspaceStoreWithAdapter(adapter) {
     return [...new Set([
       ...repoSnapshots.map((entry) => entry.repoAlias),
       ...fileSnapshots.map((entry) => entry.repoAlias),
-      ...pendingWrites.map((entry) => entry.repoAlias),
+      ...pendingOperations.map((entry) => normalizeLegacyPendingOperation(entry)?.repoAlias),
     ])]
       .filter(Boolean)
       .sort((left, right) => left.localeCompare(right));
@@ -359,21 +511,27 @@ export function createWorkspaceStoreWithAdapter(adapter) {
   }
 
   return {
-    acknowledgeWrite,
+    acknowledgeOperation,
+    blockOperationConflict,
     clearAll,
-    countPendingWrites,
+    clearPendingOperation,
+    countBlockedConflicts,
+    countPendingOperations,
     dispose() {
       adapter.close?.();
     },
     getFileSnapshot,
-    getPendingWrite,
+    getPendingOperation,
     getRepoSnapshot,
     listKnownRepoAliases,
-    listPendingWrites,
-    queueWrite,
+    listPendingOperations,
+    markOperationError,
+    markOperationSent,
     rememberSelectedPath,
-    saveFileSnapshot,
+    saveLocalFileContent,
     saveRepoSnapshot,
+    saveServerFileSnapshot,
+    upsertPendingOperation,
   };
 }
 
