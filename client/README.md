@@ -69,7 +69,7 @@ When the client sits behind one or more proxies, it also accepts requests that a
    - `Write` for the alias dropdown, file tree, new-file and new-folder icon actions on any directory row, an online-only manual refresh action, empty-folder deletion, a draggable right-pane resizer, and a short configuration pointer to the repo-management tab
    - `Repos` for creating new aliases, editing existing alias repo URLs, viewing the selected alias deploy key in a read-only box with copy support and GitHub setup link, and deleting aliases after a browser confirmation prompt
 17. New files are created from a basename-only prompt. The UI rejects path separators such as `/` and `\`.
-18. On mobile-width layouts (including Samsung Galaxy S21+ viewport widths), the file tree stacks above the editor. Selecting a file scrolls down to the editor, and a `<` button in the editor header scrolls back to the file tree so another file can be chosen.
+18. On mobile-width layouts (including Samsung Galaxy S21+ viewport widths), the app uses separate Files and Editor pages instead of stacking both panes at once. Selecting a file opens the Editor page, and the `<` button in the editor header returns to the Files page.
 19. On mobile, the editor header is intentionally compact: it shows the `<` back-to-files control, markdown preview toggle (for `.md` files), the selected filename in a clearly reduced heading size that still uses available space before truncating, and a small fixed-width sync badge so label changes do not shift layout.
 20. `Log out` is shown in the Files pane header instead of the editor header, and the editor-level `Sync now` action is removed.
 21. Mobile typography and controls are scaled up for readability and touch use, while editor text itself is kept slightly smaller so more content fits on screen.
@@ -81,6 +81,7 @@ When the client sits behind one or more proxies, it also accepts requests that a
 27. Startup no longer waits indefinitely for `/api/auth/session` during cold relaunch. The initial session probe now times out after a short window and falls back to cached authenticated session metadata when available, so Android process eviction plus flaky connectivity does not leave the app stuck on the startup screen.
 28. Repo alias restore is now cache-first for rendering and network-preferred for truth. On startup the client immediately shows aliases recovered from IndexedDB/local storage so the last workspace can hydrate without a blank dropdown, then refreshes `/api/repos` in the background and replaces that list with the authoritative server result when reachable.
 29. The client no longer polls `/api/bootstrap` on a timer while you are editing. Local op replay still runs in the background, but repo/file refresh now happens on startup, reconnect, and explicit refresh-style actions instead of periodic background reloads. This avoids stale file fetches overwriting in-progress typing while merge-conflict support is still not implemented.
+30. On mobile layouts, the app now behaves as two pages instead of one long stacked page: a Files page for alias selection, tree browsing, and repo management, and an Editor page for the open file. If the URL already points at a selected file, mobile startup opens directly into the Editor page.
 
 If the client and server are on different origins, the server must allow the client origin via `allowedOrigins`.
 The browser client uses the server-managed session cookie (`credentials: include`) so users stay signed in across browser restarts until the session expires or they log out.
@@ -191,7 +192,7 @@ The current local-first write path is now diff-first. Accepted edits are written
 
 Conflict handling in this pass is revision-based but still intentionally minimal. If the server returns a `409 conflict` for a patch op, the client keeps the local text, updates the cached server base to the conflict payload, surfaces the conflict in the sync badge, and blocks automatic replay of that exact op. A later local edit can produce a new patch against the latest server revision, but the richer merge-marker and explicit conflict-resolution workflow from the design document is still server-future work.
 
-The UI structure remains the same: repo selection and repo management live in the right pane, the editor stays plain-text-first, `.md` files use a lightweight CodeMirror surface plus an optional rendered preview, and the mobile layout still stacks repository controls above the editor with a compact header and a fixed-width sync badge. The client also continues to track `visualViewport.height` so the visible editor height follows mobile browser chrome changes. For installability and app-style launch on Android, the client ships a manifest (`display: "fullscreen"`), app icon, and service worker registration in production builds.
+The UI structure remains the same: repo selection and repo management live in the right pane, the editor stays plain-text-first, `.md` files use a lightweight CodeMirror surface plus an optional rendered preview, and mobile layout now treats Files and Editor as separate pages with a compact editor header and a fixed-width sync badge. The client also continues to track `visualViewport.height` so the visible editor height follows mobile browser chrome changes. For installability and app-style launch on Android, the client ships a manifest (`display: "fullscreen"`), app icon, and service worker registration in production builds.
 
 The Service Worker is now build-aware instead of hand-maintaining a tiny shell list. During `vite build`, the client emits a `precache-manifest.js` file that lists the current hashed bundles and public assets, and the Service Worker precaches that full set during install. Navigation requests are served from cached `index.html` first while the worker refreshes it in the background, which makes “Android killed the PWA and reopened it offline” behave like a cold local launch instead of a network failure. The API is still not cached as app data; repo trees, file contents, revisions, selected files, and pending ops remain in IndexedDB and are rehydrated by the React app after the shell boots.
 
@@ -200,6 +201,8 @@ Startup auth is also bounded now. The first `/api/auth/session` request uses a s
 Repo alias startup follows the same principle, but without changing the source of truth. The client seeds the alias list from local cache immediately so the last repo can be selected and hydrated without waiting on `/api/repos`, then still asks the server for the canonical alias list and replaces the cached view with that network result as soon as it arrives.
 
 Because merge-aware conflict handling has not landed yet, the client also avoids periodic background repo reloads while the editor is open. That means the app still replays local edits on debounce and reconnect, but it does not keep re-fetching the open file on a timer and risking visible content churn.
+
+Startup now prefers cached authenticated state as well when it exists. If the browser has a cached authenticated session snapshot from a prior online run, the client boots from that cache immediately so repo aliases, tree state, and file contents can hydrate as quickly as possible. The network session probe still runs and wins when it returns, but it no longer blocks cached workspace restore first.
 
 Design philosophy:
 
@@ -218,7 +221,8 @@ Design philosophy:
 - Refuse to boot the browser app on requests that are neither HTTPS in the browser nor explicitly marked as HTTPS by a trusted proxy.
 - Bake the public HTTPS base URL into the production bundle so browsers never target the internal HTTP app ports.
 - Surface configuration and connectivity failures clearly instead of failing silently.
-- Keep mobile editing practical by stacking tree then editor, with explicit scroll navigation between them.
+- Keep mobile editing practical by treating Files and Editor as explicit pages instead of one long stacked screen.
+- Keep mobile navigation explicit by treating Files and Editor as separate pages, defaulting to the Editor page only when the URL already names a file.
 - Keep mobile UI readable and touch-friendly by scaling type and control sizes on narrow viewports.
 - Keep the mobile editor header minimal so file context and sync state stay visible without wasting vertical space.
 - Keep account actions in the Files pane and remove editor-level manual sync controls to reduce header clutter.

@@ -505,6 +505,7 @@ function AuthScreen({
 export default function App() {
   const initialRoute = typeof window === 'undefined' ? { filePath: '', repoAlias: '' } : parseRepoRoute(window.location.pathname);
   const [activeSidebarTab, setActiveSidebarTab] = useState('select');
+  const [mobilePage, setMobilePage] = useState(() => (initialRoute.filePath ? 'editor' : 'files'));
   const [routeRepoAlias, setRouteRepoAlias] = useState(initialRoute.repoAlias);
   const [routeFilePath, setRouteFilePath] = useState(initialRoute.filePath);
   const [tree, setTree] = useState(null);
@@ -587,6 +588,11 @@ export default function App() {
   }
 
   function scrollToEditorPane() {
+    if (mobileLayout) {
+      setMobilePage('editor');
+      return;
+    }
+
     editorPaneRef.current?.scrollIntoView({
       behavior: 'smooth',
       block: 'start',
@@ -595,6 +601,12 @@ export default function App() {
 
   function scrollToFileTree() {
     setActiveSidebarTab('select');
+
+    if (mobileLayout) {
+      setMobilePage('files');
+      return;
+    }
+
     treePaneRef.current?.scrollIntoView({
       behavior: 'smooth',
       block: 'start',
@@ -619,6 +631,7 @@ export default function App() {
     setEditingAlias('');
     setEditingRepoDraft('');
     setBlockedConflictCount(0);
+    setMobilePage(initialRoute.filePath ? 'editor' : 'files');
     setPendingOperationCount(0);
     setSyncingOperations(false);
     setShowMarkdownPreview(false);
@@ -629,7 +642,27 @@ export default function App() {
     }
   }
 
-  async function loadSessionState() {
+  function applyCachedSessionState(cachedSessionState) {
+    if (!cachedSessionState || typeof cachedSessionState !== 'object') {
+      return false;
+    }
+
+    setConnectivityStatus(getConnectivityStatusFromError());
+    setHasUsers(Boolean(cachedSessionState.hasUsers));
+    setRegistrationOpen(Boolean(cachedSessionState.registrationOpen));
+    setAuthUser(cachedSessionState.user ?? null);
+    setAuthReady(true);
+    setAuthError('');
+    return true;
+  }
+
+  async function loadSessionState({ preferCached = false } = {}) {
+    const cachedSessionState = getCachedSessionState();
+
+    if (preferCached && cachedSessionState?.user) {
+      applyCachedSessionState(cachedSessionState);
+    }
+
     try {
       const data = await fetchJson('/api/auth/session', {
         timeoutMs: SESSION_STARTUP_TIMEOUT_MS,
@@ -669,15 +702,8 @@ export default function App() {
         throw error;
       }
 
-      const cachedSessionState = getCachedSessionState();
-
       if (cachedSessionState?.user) {
-        setConnectivityStatus(getConnectivityStatusFromError());
-        setHasUsers(Boolean(cachedSessionState.hasUsers));
-        setRegistrationOpen(Boolean(cachedSessionState.registrationOpen));
-        setAuthUser(cachedSessionState.user);
-        setAuthReady(true);
-        setAuthError('');
+        applyCachedSessionState(cachedSessionState);
         return cachedSessionState;
       }
 
@@ -1275,6 +1301,21 @@ export default function App() {
     }).catch(() => {});
   }, [activeRepoAlias, isAuthenticated, routeFilePath, tree, workspaceReady]);
 
+  useEffect(() => {
+    if (!mobileLayout) {
+      return;
+    }
+
+    if (routeFilePath) {
+      setMobilePage('editor');
+      return;
+    }
+
+    if (!selectedPathRef.current) {
+      setMobilePage('files');
+    }
+  }, [mobileLayout, routeFilePath]);
+
   async function loadPublicKey(repoAlias) {
     if (!repoAlias) {
       setPublicKey('');
@@ -1610,7 +1651,7 @@ export default function App() {
     }
 
     setAppError('');
-    loadSessionState().catch((error) => {
+    loadSessionState({ preferCached: true }).catch((error) => {
       setAppError(error.message);
       setAuthReady(true);
     });
@@ -2260,6 +2301,8 @@ export default function App() {
     [blockedConflictCount, connectivityStatus, pendingOperationCount, repoError, syncingOperations, status],
   );
   const remoteActionsEnabled = connectivityStatus === 'online' && repoError === '';
+  const showEditorPane = !mobileLayout || mobilePage === 'editor';
+  const showTreePane = !mobileLayout || mobilePage === 'files';
 
   if (appError) {
     return (
@@ -2313,6 +2356,7 @@ export default function App() {
   return (
     <main className="app-shell">
       <section className="workspace" ref={workspaceRef} style={workspaceStyle}>
+        {showEditorPane ? (
         <section className="editor-pane" ref={editorPaneRef}>
           {mobileLayout ? (
             <header className="pane-header pane-header-mobile-editor">
@@ -2438,7 +2482,9 @@ export default function App() {
             <span>{saveError}</span>
           </footer>
         </section>
+        ) : null}
 
+        {!mobileLayout ? (
         <div
           aria-label="Resize sidebar"
           aria-orientation="vertical"
@@ -2448,7 +2494,9 @@ export default function App() {
           role="separator"
           tabIndex={0}
         />
+        ) : null}
 
+        {showTreePane ? (
         <aside className="tree-pane" ref={treePaneRef}>
           <header className="pane-header pane-header-sidebar">
             <div>
@@ -2673,6 +2721,7 @@ export default function App() {
             )}
           </div>
         </aside>
+        ) : null}
       </section>
     </main>
   );
