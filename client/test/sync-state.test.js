@@ -34,6 +34,21 @@ test('deriveSyncState reports queued local edits while online', () => {
   assert.equal(syncState.badgeLabel, 'Local');
 });
 
+test('deriveSyncState treats dirty server status as a local pending state', () => {
+  const syncState = deriveSyncState({
+    connectivity: 'online',
+    pendingOperationCount: 0,
+    status: {
+      lastSyncMessage: 'Unsynced edits in journal.md.',
+      lastSyncStatus: 'dirty',
+    },
+  });
+
+  assert.equal(syncState.badgeStatus, 'pending_local');
+  assert.equal(syncState.badgeLabel, 'Local');
+  assert.equal(syncState.detail, 'Unsynced edits in journal.md.');
+});
+
 test('deriveSyncState falls back to the last known synced server state', () => {
   const syncState = deriveSyncState({
     connectivity: 'online',

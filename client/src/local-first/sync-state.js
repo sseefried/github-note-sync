@@ -73,6 +73,14 @@ export function deriveSyncState({
     };
   }
 
+  if (status?.lastSyncStatus === 'dirty') {
+    return {
+      badgeStatus: 'pending_local',
+      badgeLabel: 'Local',
+      detail: status?.lastSyncMessage ?? 'Local edits are waiting to sync.',
+    };
+  }
+
   if (status?.lastSyncStatus === 'error' || status?.lastSyncStatus === 'overwritten') {
     return {
       badgeStatus: 'remote_error',
