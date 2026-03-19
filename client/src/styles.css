@@ -651,6 +651,11 @@ select {
   color: #8a4f0d;
 }
 
+.sync-badge-pending_local {
+  background: rgba(221, 160, 74, 0.22);
+  color: #7a4c10;
+}
+
 .sync-badge-pushed,
 .sync-badge-ready,
 .sync-badge-idle {

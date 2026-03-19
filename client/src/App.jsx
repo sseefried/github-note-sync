@@ -1479,7 +1479,11 @@ export default function App() {
     }
   }
 
-  async function loadState({ forceReloadFile = false, repoAlias = activeRepoAliasRef.current } = {}) {
+  async function loadState({
+    forceReloadFile = false,
+    refreshFileOnStateChange = true,
+    repoAlias = activeRepoAliasRef.current,
+  } = {}) {
     if (!repoAlias) {
       setTree(null);
       setStatus(null);
@@ -1527,7 +1531,9 @@ export default function App() {
 
       if (
         nextSelectedPath &&
-        (forceReloadFile || stateChanged || nextSelectedPath !== selectedPathRef.current)
+        (forceReloadFile ||
+          nextSelectedPath !== selectedPathRef.current ||
+          (refreshFileOnStateChange && stateChanged))
       ) {
         await loadFile(nextSelectedPath, repoAlias, {
           preferLocal: true,
@@ -1711,6 +1717,13 @@ export default function App() {
 
     const interval = window.setInterval(() => {
       flushPendingWrite().catch(() => {});
+
+      if (activeRepoAliasRef.current && connectivityStatusRef.current === 'online') {
+        loadState({
+          refreshFileOnStateChange: false,
+          repoAlias: activeRepoAliasRef.current,
+        }).catch(() => {});
+      }
     }, 3_000);
 
     return () => window.clearInterval(interval);

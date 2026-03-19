@@ -83,6 +83,7 @@ When the client sits behind one or more proxies, it also accepts requests that a
 29. The client no longer polls `/api/bootstrap` on a timer while you are editing. Local op replay still runs in the background, but repo/file refresh now happens on startup, reconnect, and explicit refresh-style actions instead of periodic background reloads. This avoids stale file fetches overwriting in-progress typing while merge-conflict support is still not implemented.
 30. On mobile layouts, the app now behaves as two pages instead of one long stacked page: a Files page for alias selection, tree browsing, and repo management, and an Editor page for the open file. If the URL already points at a selected file, mobile startup opens directly into the Editor page.
 31. Sync badge state now treats locally dirty editor status consistently: if the current file has unsynced local edits, the badge reports `Local` instead of incorrectly showing `Synced`.
+32. The `Local` sync badge is visually distinct from `Synced`, and the client now does lightweight background status refreshes without reloading the open file. That lets the badge move from `Local` to `Synced` after the server's periodic Git sync completes, without bringing back timer-driven editor overwrites.
 
 If the client and server are on different origins, the server must allow the client origin via `allowedOrigins`.
 The browser client uses the server-managed session cookie (`credentials: include`) so users stay signed in across browser restarts until the session expires or they log out.
