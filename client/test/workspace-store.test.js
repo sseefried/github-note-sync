@@ -47,6 +47,7 @@ test('acknowledgeOperation ignores stale op ids and keeps newer local edits queu
   });
 
   const secondOperation = await store.upsertPendingOperation({
+    baseCommit: 'commit-zero',
     baseRevision: 'sha256:zero',
     filePath: 'notes/today.md',
     kind: 'patch',
@@ -70,6 +71,13 @@ test('acknowledgeOperation ignores stale op ids and keeps newer local edits queu
   );
 
   assert.equal(await store.countPendingOperations(), 1);
+  assert.equal(
+    (
+      await store.getPendingOperation('personal', 'notes/today.md')
+    ).baseCommit,
+    'commit-zero',
+  );
+
   assert.equal(
     (
       await store.getPendingOperation('personal', 'notes/today.md')

@@ -930,7 +930,8 @@ export default function App() {
       return null;
     }
 
-    const [fileSnapshot, currentOperation] = await Promise.all([
+    const [repoSnapshot, fileSnapshot, currentOperation] = await Promise.all([
+      workspaceStore.getRepoSnapshot(repoAlias),
       workspaceStore.getFileSnapshot(repoAlias, filePath),
       workspaceStore.getPendingOperation(repoAlias, filePath),
     ]);
@@ -965,6 +966,7 @@ export default function App() {
 
     if (typeof fileSnapshot.revision !== 'string' || fileSnapshot.revision.trim() === '') {
       nextOperation = await workspaceStore.upsertPendingOperation({
+        baseCommit: repoSnapshot?.headRevision ?? null,
         filePath,
         kind: 'legacy_full_content',
         payload: null,
@@ -983,6 +985,7 @@ export default function App() {
       }
 
       nextOperation = await workspaceStore.upsertPendingOperation({
+        baseCommit: repoSnapshot?.headRevision ?? null,
         baseRevision: fileSnapshot.revision,
         filePath,
         kind: 'patch',
@@ -1154,11 +1157,6 @@ export default function App() {
       ) {
         setConnectivityStatus('online');
 
-        const currentFileSnapshot = await workspaceStore.getFileSnapshot(
-          activeOperation.repoAlias,
-          activeOperation.path,
-        );
-
         if (
           typeof error.payload?.currentContent === 'string' &&
           typeof error.payload?.currentRevision === 'string'
@@ -1175,11 +1173,9 @@ export default function App() {
           activeOperation.repoAlias,
           activeOperation.path,
           {
+            baseCommit:
+              typeof activeOperation.baseCommit === 'string' ? activeOperation.baseCommit : null,
             ...(error.payload ?? {}),
-            baseContent:
-              typeof currentFileSnapshot?.serverContent === 'string'
-                ? currentFileSnapshot.serverContent
-                : null,
           },
         );
         setSaveError(
@@ -1617,6 +1613,7 @@ export default function App() {
       const stateChanged = data.status.stateVersion !== statusRef.current?.stateVersion;
 
       await workspaceStore?.saveRepoSnapshot({
+        headRevision: data.headRevision ?? null,
         repoAlias,
         selectedPath: nextSelectedPath,
         status: data.status,
@@ -1697,6 +1694,7 @@ export default function App() {
       setTree(data.tree);
 
       await workspaceStoreRef.current?.saveRepoSnapshot({
+        headRevision: data.headRevision ?? null,
         repoAlias,
         selectedPath:
           selectedPathRef.current && hasFilePath(data.tree, selectedPathRef.current)
@@ -2289,8 +2287,8 @@ export default function App() {
       return;
     }
 
-    const baseContent = operation.conflict?.baseContent;
-    const forceFullConflict = typeof baseContent !== 'string';
+    const baseCommit = operation.conflict?.baseCommit ?? operation.baseCommit ?? null;
+    const forceFullConflict = typeof baseCommit !== 'string';
 
     setCommittingConflictMarkers(true);
     setSaveError('');
@@ -2298,7 +2296,7 @@ export default function App() {
     try {
       const data = await fetchJson('/api/conflicts/commit-markers', {
         body: JSON.stringify({
-          baseContent: typeof baseContent === 'string' ? baseContent : '',
+          baseCommit: typeof baseCommit === 'string' ? baseCommit : '',
           forceFullConflict,
           localContent: operation.targetContent,
           path: operation.path,

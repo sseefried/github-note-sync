@@ -74,6 +74,7 @@ function normalizeLegacyPendingOperation(record) {
   ) {
     return {
       attemptCount: Number.isInteger(record.attemptCount) ? record.attemptCount : 0,
+      baseCommit: typeof record.baseCommit === 'string' ? record.baseCommit : null,
       baseRevision: typeof record.baseRevision === 'string' ? record.baseRevision : null,
       createdAt: typeof record.updatedAt === 'string' ? record.updatedAt : makeTimestamp(),
       id: createFileRecordId(record.repoAlias, record.path),
@@ -217,6 +218,7 @@ export function createWorkspaceStoreWithAdapter(adapter) {
   }
 
   async function saveRepoSnapshot({
+    headRevision,
     repoAlias,
     selectedPath,
     status,
@@ -231,6 +233,8 @@ export function createWorkspaceStoreWithAdapter(adapter) {
 
     const currentSnapshot = await getRepoSnapshot(normalizedRepoAlias);
     const nextSnapshot = {
+      headRevision:
+        typeof headRevision === 'string' ? headRevision : currentSnapshot?.headRevision ?? null,
       repoAlias: normalizedRepoAlias,
       selectedPath:
         typeof selectedPath === 'string'
@@ -331,6 +335,7 @@ export function createWorkspaceStoreWithAdapter(adapter) {
   }
 
   async function upsertPendingOperation({
+    baseCommit,
     baseRevision,
     filePath,
     kind,
@@ -355,6 +360,7 @@ export function createWorkspaceStoreWithAdapter(adapter) {
         currentOperation?.status === 'pending' && currentOperation.opId === opId
           ? currentOperation.attemptCount
           : 0,
+      baseCommit: typeof baseCommit === 'string' ? baseCommit : currentOperation?.baseCommit ?? null,
       baseRevision: typeof baseRevision === 'string' ? baseRevision : null,
       createdAt: currentOperation?.createdAt ?? updatedAt,
       id: createFileRecordId(normalizedRepoAlias, normalizedFilePath),
