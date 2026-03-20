@@ -148,12 +148,19 @@ test('blocked conflicts are excluded from pending counts', async () => {
     targetContent: 'beta',
   });
   await store.blockOperationConflict('personal', 'notes/today.md', {
+    baseContent: 'alpha',
     currentRevision: 'sha256:server',
     path: 'notes/today.md',
   });
 
   assert.equal(await store.countPendingOperations(), 0);
   assert.equal(await store.countBlockedConflicts(), 1);
+  assert.equal(
+    (
+      await store.getPendingOperation('personal', 'notes/today.md')
+    ).conflict.baseContent,
+    'alpha',
+  );
 });
 
 test('listKnownRepoAliases combines cached repo snapshots and pending operations', async () => {

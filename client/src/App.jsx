@@ -544,7 +544,9 @@ export default function App() {
     getConnectivityStatusFromNavigator(),
   );
   const [blockedConflictCount, setBlockedConflictCount] = useState(0);
+  const [committingConflictMarkers, setCommittingConflictMarkers] = useState(false);
   const [pendingOperationCount, setPendingOperationCount] = useState(0);
+  const [selectedConflictOperation, setSelectedConflictOperation] = useState(null);
   const [syncingOperations, setSyncingOperations] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     if (typeof window === 'undefined') {
@@ -631,8 +633,10 @@ export default function App() {
     setEditingAlias('');
     setEditingRepoDraft('');
     setBlockedConflictCount(0);
+    setCommittingConflictMarkers(false);
     setMobilePage(initialRoute.filePath ? 'editor' : 'files');
     setPendingOperationCount(0);
+    setSelectedConflictOperation(null);
     setSyncingOperations(false);
     setShowMarkdownPreview(false);
 
@@ -748,6 +752,38 @@ export default function App() {
   useEffect(() => {
     syncingOperationsRef.current = syncingOperations;
   }, [syncingOperations]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!workspaceReady || !activeRepoAlias || !selectedPath) {
+      setSelectedConflictOperation(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    workspaceStoreRef.current
+      ?.getPendingOperation(activeRepoAlias, selectedPath)
+      .then((operation) => {
+        if (cancelled) {
+          return;
+        }
+
+        setSelectedConflictOperation(
+          operation?.status === 'blocked_conflict' ? operation : null,
+        );
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSelectedConflictOperation(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRepoAlias, blockedConflictCount, selectedPath, workspaceReady]);
 
   useEffect(() => {
     function handlePopState() {
@@ -1098,6 +1134,11 @@ export default function App() {
         error.status === 409 &&
         activeOperation
       ) {
+        const currentFileSnapshot = await workspaceStore.getFileSnapshot(
+          activeOperation.repoAlias,
+          activeOperation.path,
+        );
+
         if (
           typeof error.payload?.currentContent === 'string' &&
           typeof error.payload?.currentRevision === 'string'
@@ -1113,16 +1154,22 @@ export default function App() {
         await workspaceStore.blockOperationConflict(
           activeOperation.repoAlias,
           activeOperation.path,
-          error.payload ?? null,
+          {
+            ...(error.payload ?? {}),
+            baseContent:
+              typeof currentFileSnapshot?.serverContent === 'string'
+                ? currentFileSnapshot.serverContent
+                : null,
+          },
         );
         setSaveError(
-          `Conflict detected in ${activeOperation.path}. Edit again to retry against the latest server version.`,
+          `Conflict detected in ${activeOperation.path}. Press OK to create a merged version with conflict markers.`,
         );
         setStatus((currentStatus) =>
           currentStatus
             ? {
                 ...currentStatus,
-                lastSyncMessage: `Conflict detected in ${activeOperation.path}.`,
+                lastSyncMessage: `Conflict detected in ${activeOperation.path}. Press OK to create a merged version.`,
                 lastSyncStatus: 'error',
               }
             : currentStatus,
@@ -2187,6 +2234,83 @@ export default function App() {
     schedulePendingWrite();
   }
 
+  async function handleCommitConflictMarkers() {
+    const operation = selectedConflictOperation;
+    const workspaceStore = workspaceStoreRef.current;
+
+    if (!workspaceStore || !operation) {
+      return;
+    }
+
+    const baseContent = operation.conflict?.baseContent;
+
+    if (typeof baseContent !== 'string') {
+      setSaveError(
+        `The original base text for ${operation.path} is missing. Refresh the repo and retry.`,
+      );
+      return;
+    }
+
+    setCommittingConflictMarkers(true);
+    setSaveError('');
+
+    try {
+      const data = await fetchJson('/api/conflicts/commit-markers', {
+        body: JSON.stringify({
+          baseContent,
+          localContent: operation.targetContent,
+          path: operation.path,
+          repoAlias: operation.repoAlias,
+        }),
+        method: 'POST',
+      });
+
+      setConnectivityStatus('online');
+      setStatus(data.status ?? null);
+
+      await workspaceStore.clearPendingOperation(operation.repoAlias, operation.path);
+      await workspaceStore.saveLocalFileContent({
+        content: data.file.content,
+        filePath: operation.path,
+        repoAlias: operation.repoAlias,
+      });
+      await workspaceStore.saveServerFileSnapshot({
+        content: data.file.content,
+        filePath: operation.path,
+        repoAlias: operation.repoAlias,
+        revision: data.file.revision ?? null,
+      });
+      await workspaceStore.saveRepoSnapshot({
+        repoAlias: operation.repoAlias,
+        selectedPath: operation.path,
+        status: data.status ?? statusRef.current,
+        tree,
+      });
+      await syncOperationCounts(workspaceStore);
+
+      if (
+        operation.repoAlias === activeRepoAliasRef.current &&
+        operation.path === selectedPathRef.current
+      ) {
+        setContent(data.file.content);
+      }
+
+      setSelectedConflictOperation(null);
+    } catch (error) {
+      if (handleUnauthorized(error)) {
+        return;
+      }
+
+      if (isNetworkFailure(error)) {
+        setConnectivityStatus(getConnectivityStatusFromError());
+      }
+
+      setSaveError(error.message);
+    } finally {
+      setCommittingConflictMarkers(false);
+    }
+  }
+
   function handleEditorChange(event) {
     updateEditorContent(event.target.value);
   }
@@ -2436,6 +2560,28 @@ export default function App() {
             <span>{syncState.detail}</span>
           </div>
 
+          {selectedConflictOperation ? (
+            <section className="conflict-prompt" role="alert">
+              <div>
+                <p className="eyebrow">Conflict Detected</p>
+                <h2>Create a merged version with conflict markers</h2>
+                <p>
+                  Press <strong>OK</strong> to create a normal committed version of{' '}
+                  <code>{selectedConflictOperation.path}</code> that keeps both sides and inserts
+                  Git conflict markers where they overlap.
+                </p>
+              </div>
+              <button
+                className="solid-button"
+                disabled={committingConflictMarkers || !remoteActionsEnabled}
+                onClick={handleCommitConflictMarkers}
+                type="button"
+              >
+                {committingConflictMarkers ? 'Creating…' : 'OK'}
+              </button>
+            </section>
+          ) : null}
+
           <section className="editor-surface">
             {!activeRepoAlias ? null : repoError ? (
               <div className="empty-state">{repoError}</div>
@@ -2486,8 +2632,10 @@ export default function App() {
             <span>
               {loadingFile
                 ? 'Loading file…'
-                : blockedConflictCount > 0
-                  ? `${blockedConflictCount} conflict${blockedConflictCount === 1 ? '' : 's'} blocked until you refresh and resolve them.`
+                : selectedConflictOperation
+                  ? 'Conflict detected. Press OK above to create a merged version with conflict markers.'
+                  : blockedConflictCount > 0
+                    ? `${blockedConflictCount} conflict${blockedConflictCount === 1 ? '' : 's'} waiting for confirmation.`
                   : pendingOperationCount > 0
                     ? `${pendingOperationCount} local edit${pendingOperationCount === 1 ? '' : 's'} queued in IndexedDB.`
                   : 'Edits write through to the local cache first, then replay to the server.'}

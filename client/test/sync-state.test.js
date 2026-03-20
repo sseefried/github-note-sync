@@ -10,7 +10,7 @@ test('deriveSyncState surfaces blocked conflicts before normal sync progress', (
   });
 
   assert.equal(syncState.badgeStatus, 'conflict');
-  assert.match(syncState.detail, /2 conflicts need manual resolution/i);
+  assert.match(syncState.detail, /2 conflicts waiting for confirmation/i);
 });
 
 test('deriveSyncState surfaces offline local edits first', () => {

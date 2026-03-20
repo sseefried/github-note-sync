@@ -28,7 +28,7 @@ export function deriveSyncState({
     return {
       badgeStatus: 'conflict',
       badgeLabel: 'Conflict',
-      detail: `${pluralize(blockedConflictCount, 'conflict')} need manual resolution before sync can continue.`,
+      detail: `${pluralize(blockedConflictCount, 'conflict')} waiting for confirmation before a merged version is created.`,
     };
   }
 
