@@ -2054,7 +2054,7 @@ export default function App() {
       })
       .catch(() => false)
       .finally(() => {
-        loadState({ repoAlias: activeRepoAlias }).catch(() => {});
+        loadState({ forceReloadFile: true, repoAlias: activeRepoAlias }).catch(() => {});
       });
 
     return undefined;
@@ -2905,6 +2905,41 @@ export default function App() {
   const conflictDialogActive = Boolean(
     fastForwardPrompt || reloadFromServerPrompt || selectedConflictOperation,
   );
+  const editorInteractionLocked = conflictDialogActive || loadingFile;
+  const syncPromptConfig = reloadFromServerPrompt
+    ? {
+        actionLabel: reloadingConflictFromServer ? 'Reloading…' : 'OK',
+        disabled: reloadingConflictFromServer || !remoteActionsEnabled,
+        eyebrow: 'Server Reload Required',
+        headline: 'Reload the latest server version for this file',
+        onConfirm: handleReloadConflictFromServer,
+        path: reloadFromServerPrompt.path,
+        promptKind: 'reload_from_server',
+      }
+    : fastForwardPrompt
+      ? {
+          actionLabel: applyingFastForward ? 'Applying…' : 'OK',
+          disabled: applyingFastForward || !remoteActionsEnabled,
+          eyebrow: 'Server Changes Available',
+          headline:
+            fastForwardPrompt.kind === 'adopt_remote'
+              ? 'Pull in newer server changes'
+              : 'Pull in newer non-overlapping server changes',
+          onConfirm: handleApplyFastForward,
+          path: fastForwardPrompt.path,
+          promptKind: fastForwardPrompt.kind,
+        }
+      : selectedConflictOperation
+        ? {
+            actionLabel: committingConflictMarkers ? 'Creating…' : 'OK',
+            disabled: committingConflictMarkers || !remoteActionsEnabled,
+            eyebrow: 'Conflict Detected',
+            headline: 'Create a merged version with conflict markers',
+            onConfirm: handleCommitConflictMarkers,
+            path: selectedConflictOperation.path,
+            promptKind: 'conflict_markers',
+          }
+        : null;
   const shortDebugBaseCommit =
     typeof debugBaseCommit === 'string' && debugBaseCommit.length >= 8
       ? debugBaseCommit.slice(0, 8)
@@ -2970,7 +3005,7 @@ export default function App() {
                 <button
                   aria-label="Go back to file tree"
                   className="editor-mobile-back"
-                  disabled={conflictDialogActive}
+                  disabled={editorInteractionLocked}
                   onClick={scrollToFileTree}
                   type="button"
                 >
@@ -2980,7 +3015,7 @@ export default function App() {
                   <button
                     aria-label={markdownPreviewActive ? 'Show markdown editor' : 'Show markdown preview'}
                     className="editor-mobile-toggle"
-                    disabled={conflictDialogActive}
+                    disabled={editorInteractionLocked}
                     onClick={() => {
                       setShowMarkdownPreview((current) => !current);
                     }}
@@ -3015,7 +3050,7 @@ export default function App() {
                   <button
                     aria-label={markdownPreviewActive ? 'Show markdown editor' : 'Show markdown preview'}
                     className="editor-preview-toggle"
-                    disabled={conflictDialogActive}
+                    disabled={editorInteractionLocked}
                     onClick={() => {
                       setShowMarkdownPreview((current) => !current);
                     }}
@@ -3040,84 +3075,6 @@ export default function App() {
             <span>{syncState.detail}</span>
           </div>
 
-          {reloadFromServerPrompt ? (
-            <section className="conflict-prompt" ref={promptRef} role="alert">
-              <div>
-                <p className="eyebrow">Server Reload Required</p>
-                <h2>Reload the latest server version for this file</h2>
-                <p>
-                  The original base commit for <code>{reloadFromServerPrompt.path}</code> is no
-                  longer available. Press <strong>OK</strong> to discard the blocked local conflict
-                  flow and reload the latest server version of this file.
-                </p>
-                {saveError ? <p className="conflict-prompt-feedback">{saveError}</p> : null}
-              </div>
-              <button
-                className="solid-button"
-                disabled={reloadingConflictFromServer || !remoteActionsEnabled}
-                onClick={handleReloadConflictFromServer}
-                type="button"
-              >
-                {reloadingConflictFromServer ? 'Reloading…' : 'OK'}
-              </button>
-            </section>
-          ) : fastForwardPrompt ? (
-            <section className="conflict-prompt" ref={promptRef} role="alert">
-              <div>
-                <p className="eyebrow">Server Changes Available</p>
-                <h2>
-                  {fastForwardPrompt.kind === 'adopt_remote'
-                    ? 'Pull in newer server changes'
-                    : 'Pull in newer non-overlapping server changes'}
-                </h2>
-                <p>
-                  {fastForwardPrompt.kind === 'adopt_remote' ? (
-                    <>
-                      Press <strong>OK</strong> to replace the currently shown cached version of{' '}
-                      <code>{fastForwardPrompt.path}</code> with the newer server version.
-                    </>
-                  ) : (
-                    <>
-                      Press <strong>OK</strong> to pull in the newer non-overlapping server changes for{' '}
-                      <code>{fastForwardPrompt.path}</code>, keep your local edits, and continue syncing
-                      automatically.
-                    </>
-                  )}
-                </p>
-                {saveError ? <p className="conflict-prompt-feedback">{saveError}</p> : null}
-              </div>
-              <button
-                className="solid-button"
-                disabled={applyingFastForward || !remoteActionsEnabled}
-                onClick={handleApplyFastForward}
-                type="button"
-              >
-                {applyingFastForward ? 'Applying…' : 'OK'}
-              </button>
-            </section>
-          ) : selectedConflictOperation ? (
-            <section className="conflict-prompt" ref={promptRef} role="alert">
-              <div>
-                <p className="eyebrow">Conflict Detected</p>
-                <h2>Create a merged version with conflict markers</h2>
-                <p>
-                  Press <strong>OK</strong> to create a normal committed version of{' '}
-                  <code>{selectedConflictOperation.path}</code> that keeps both sides and inserts
-                  Git conflict markers where they overlap.
-                </p>
-                {saveError ? <p className="conflict-prompt-feedback">{saveError}</p> : null}
-              </div>
-              <button
-                className="solid-button"
-                disabled={committingConflictMarkers || !remoteActionsEnabled}
-                onClick={handleCommitConflictMarkers}
-                type="button"
-              >
-                {committingConflictMarkers ? 'Creating…' : 'OK'}
-              </button>
-            </section>
-          ) : null}
-
           <section className="editor-surface">
             {!activeRepoAlias ? null : repoError ? (
               <div className="empty-state">{repoError}</div>
@@ -3136,17 +3093,17 @@ export default function App() {
                     highlightActiveLineGutter: false,
                   }}
                   className="editor-code"
-                  editable={!conflictDialogActive}
+                  editable={!editorInteractionLocked}
                   extensions={markdownEditorExtensions}
                   onBlur={() => {
                     flushPendingWrite().catch(() => {});
                   }}
                   onChange={(nextValue) => {
-                    if (!conflictDialogActive) {
+                    if (!editorInteractionLocked) {
                       updateEditorContent(nextValue);
                     }
                   }}
-                  readOnly={conflictDialogActive}
+                  readOnly={editorInteractionLocked}
                   spellCheck
                   value={content}
                 />
@@ -3155,7 +3112,7 @@ export default function App() {
                   autoCapitalize="sentences"
                   autoCorrect="on"
                   className="editor-textarea"
-                  disabled={conflictDialogActive}
+                  disabled={editorInteractionLocked}
                   onBlur={() => {
                     flushPendingWrite().catch(() => {});
                   }}
@@ -3168,6 +3125,57 @@ export default function App() {
               <div className="empty-state">This repository does not contain any files yet.</div>
             )}
           </section>
+
+          {syncPromptConfig ? (
+            <div className="sync-dialog-backdrop" role="presentation">
+              <section
+                className="conflict-prompt sync-dialog"
+                ref={promptRef}
+                role="alertdialog"
+                aria-modal="true"
+              >
+                <div>
+                  <p className="eyebrow">{syncPromptConfig.eyebrow}</p>
+                  <h2>{syncPromptConfig.headline}</h2>
+                  <p>
+                    {syncPromptConfig.promptKind === 'reload_from_server' ? (
+                      <>
+                        The original base commit for <code>{syncPromptConfig.path}</code> is no longer
+                        available. Press <strong>OK</strong> to discard the blocked local conflict flow
+                        and reload the latest server version of this file.
+                      </>
+                    ) : syncPromptConfig.promptKind === 'adopt_remote' ? (
+                      <>
+                        Press <strong>OK</strong> to replace the currently shown cached version of{' '}
+                        <code>{syncPromptConfig.path}</code> with the newer server version.
+                      </>
+                    ) : syncPromptConfig.promptKind === 'replay_local' ? (
+                      <>
+                        Press <strong>OK</strong> to pull in the newer non-overlapping server changes for{' '}
+                        <code>{syncPromptConfig.path}</code>, keep your local edits, and continue syncing
+                        automatically.
+                      </>
+                    ) : (
+                      <>
+                        Press <strong>OK</strong> to create a normal committed version of{' '}
+                        <code>{syncPromptConfig.path}</code> that keeps both sides and inserts Git
+                        conflict markers where they overlap.
+                      </>
+                    )}
+                  </p>
+                  {saveError ? <p className="conflict-prompt-feedback">{saveError}</p> : null}
+                </div>
+                <button
+                  className="solid-button"
+                  disabled={syncPromptConfig.disabled}
+                  onClick={syncPromptConfig.onConfirm}
+                  type="button"
+                >
+                  {syncPromptConfig.actionLabel}
+                </button>
+              </section>
+            </div>
+          ) : null}
 
           <footer className="footer-row">
             <span>
