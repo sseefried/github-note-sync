@@ -905,6 +905,23 @@ export default function App() {
     };
   }
 
+  async function syncSelectedConflictOperation({
+    filePath = selectedPathRef.current,
+    repoAlias = activeRepoAliasRef.current,
+  } = {}) {
+    const workspaceStore = workspaceStoreRef.current;
+
+    if (!workspaceStore || !repoAlias || !filePath) {
+      setSelectedConflictOperation(null);
+      return null;
+    }
+
+    const operation = await workspaceStore.getPendingOperation(repoAlias, filePath);
+    const nextOperation = operation?.status === 'blocked_conflict' ? operation : null;
+    setSelectedConflictOperation(nextOperation);
+    return nextOperation;
+  }
+
   async function preparePendingOperation(repoAlias, filePath) {
     const workspaceStore = workspaceStoreRef.current;
 
@@ -1467,9 +1484,16 @@ export default function App() {
     }
 
     const workspaceStore = workspaceStoreRef.current;
+    const switchingFiles =
+      repoAlias !== activeRepoAliasRef.current || path !== selectedPathRef.current;
+
     setLoadingFile(true);
     setSaveError('');
-    setSelectedConflictOperation(null);
+
+    if (switchingFiles) {
+      setSelectedConflictOperation(null);
+    }
+
     setSelectedPath(path);
 
     if (routeMode !== false) {
@@ -1522,6 +1546,7 @@ export default function App() {
 
       setSaveError(error.message);
     } finally {
+      await syncSelectedConflictOperation({ filePath: path, repoAlias });
       setLoadingFile(false);
     }
   }
