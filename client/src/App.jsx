@@ -579,6 +579,7 @@ export default function App() {
   const treePaneRef = useRef(null);
   const statusRef = useRef(null);
   const selectedPathRef = useRef(null);
+  const routeFilePathRef = useRef(initialRoute.filePath);
   const activeRepoAliasRef = useRef('');
   const connectivityStatusRef = useRef(getConnectivityStatusFromNavigator());
   const flushPendingWriteRef = useRef(null);
@@ -751,6 +752,10 @@ export default function App() {
   useEffect(() => {
     selectedPathRef.current = selectedPath;
   }, [selectedPath]);
+
+  useEffect(() => {
+    routeFilePathRef.current = routeFilePath;
+  }, [routeFilePath]);
 
   useEffect(() => {
     activeRepoAliasRef.current = activeRepoAlias;
@@ -1459,8 +1464,8 @@ export default function App() {
     setRepoError('');
 
     const nextSelectedPath =
-      routeFilePath && hasFilePath(repoSnapshot.tree, routeFilePath)
-        ? routeFilePath
+      routeFilePathRef.current && hasFilePath(repoSnapshot.tree, routeFilePathRef.current)
+        ? routeFilePathRef.current
         : repoSnapshot.selectedPath && hasFilePath(repoSnapshot.tree, repoSnapshot.selectedPath)
           ? repoSnapshot.selectedPath
           : findFirstFile(repoSnapshot.tree);
@@ -1618,8 +1623,8 @@ export default function App() {
       setStatus(data.status);
 
       const nextSelectedPath =
-        routeFilePath && hasFilePath(data.tree, routeFilePath)
-          ? routeFilePath
+        routeFilePathRef.current && hasFilePath(data.tree, routeFilePathRef.current)
+          ? routeFilePathRef.current
           : selectedPathRef.current && hasFilePath(data.tree, selectedPathRef.current)
             ? selectedPathRef.current
             : findFirstFile(data.tree);
