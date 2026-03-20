@@ -2268,13 +2268,7 @@ export default function App() {
     }
 
     const baseContent = operation.conflict?.baseContent;
-
-    if (typeof baseContent !== 'string') {
-      setSaveError(
-        `The original base text for ${operation.path} is missing. Refresh the repo and retry.`,
-      );
-      return;
-    }
+    const forceFullConflict = typeof baseContent !== 'string';
 
     setCommittingConflictMarkers(true);
     setSaveError('');
@@ -2282,7 +2276,8 @@ export default function App() {
     try {
       const data = await fetchJson('/api/conflicts/commit-markers', {
         body: JSON.stringify({
-          baseContent,
+          baseContent: typeof baseContent === 'string' ? baseContent : '',
+          forceFullConflict,
           localContent: operation.targetContent,
           path: operation.path,
           repoAlias: operation.repoAlias,
