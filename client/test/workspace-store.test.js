@@ -71,19 +71,14 @@ test('acknowledgeOperation ignores stale op ids and keeps newer local edits queu
   );
 
   assert.equal(await store.countPendingOperations(), 1);
-  assert.equal(
-    (
-      await store.getPendingOperation('personal', 'notes/today.md')
-    ).baseCommit,
-    'commit-zero',
-  );
+  const staleAckOperation = await store.getPendingOperation('personal', 'notes/today.md');
+  assert.equal(staleAckOperation.baseCommit, 'commit-zero');
+  assert.equal(staleAckOperation.opId, secondOperation.opId);
 
-  assert.equal(
-    (
-      await store.getPendingOperation('personal', 'notes/today.md')
-    ).opId,
-    secondOperation.opId,
-  );
+  const staleAckSnapshot = await store.getFileSnapshot('personal', 'notes/today.md');
+  assert.equal(staleAckSnapshot.content, 'draft two');
+  assert.equal(staleAckSnapshot.serverContent, 'draft one');
+  assert.equal(staleAckSnapshot.revision, 'sha256:one');
 
   assert.equal(
     await store.acknowledgeOperation({

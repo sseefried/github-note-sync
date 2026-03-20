@@ -472,6 +472,14 @@ export function createWorkspaceStoreWithAdapter(adapter) {
     const currentOperation = await getPendingOperation(repoAlias, filePath);
 
     if (!currentOperation || currentOperation.opId !== opId) {
+      await saveServerFileSnapshot({
+        advanceBase: true,
+        content,
+        filePath,
+        preserveLocalContent: true,
+        repoAlias,
+        revision,
+      });
       return false;
     }
 
