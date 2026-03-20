@@ -277,6 +277,7 @@ function DeleteIcon() {
 }
 
 function TreeNode({
+  disabled = false,
   depth = 0,
   node,
   onCreateFile,
@@ -292,6 +293,7 @@ function TreeNode({
     return (
       <button
         className={`tree-file ${selectedPath === node.path ? 'tree-file-selected' : ''}`}
+        disabled={disabled}
         onClick={() => onSelect(node.path)}
         type="button"
       >
@@ -312,6 +314,7 @@ function TreeNode({
       <div className="tree-row">
         <button
           className="tree-directory"
+          disabled={disabled}
           onClick={() => setExpanded((current) => !current)}
           type="button"
         >
@@ -323,6 +326,7 @@ function TreeNode({
             {showRefreshAction ? (
               <button
                 className="tree-action-button"
+                disabled={disabled}
                 onClick={(event) => {
                   event.stopPropagation();
                   onRefresh();
@@ -336,6 +340,7 @@ function TreeNode({
             {showNewFileAction ? (
               <button
                 className="tree-action-button"
+                disabled={disabled}
                 onClick={(event) => {
                   event.stopPropagation();
                   onCreateFile(node.path);
@@ -349,6 +354,7 @@ function TreeNode({
             {showNewFolderAction ? (
               <button
                 className="tree-action-button"
+                disabled={disabled}
                 onClick={(event) => {
                   event.stopPropagation();
                   onCreateFolder(node.path);
@@ -362,6 +368,7 @@ function TreeNode({
             {showDeleteFolderAction ? (
               <button
                 className="tree-action-button tree-action-button-danger"
+                disabled={disabled}
                 onClick={(event) => {
                   event.stopPropagation();
                   onDeleteFolder(node.path, node.name);
@@ -379,6 +386,7 @@ function TreeNode({
         <div className="tree-children">
           {(node.children ?? []).map((child) => (
             <TreeNode
+              disabled={disabled}
               depth={depth + 1}
               key={child.path || child.name}
               node={child}
@@ -578,6 +586,7 @@ export default function App() {
   const workspaceRef = useRef(null);
   const editorPaneRef = useRef(null);
   const treePaneRef = useRef(null);
+  const promptRef = useRef(null);
   const statusRef = useRef(null);
   const selectedPathRef = useRef(null);
   const routeFilePathRef = useRef(initialRoute.filePath);
@@ -603,6 +612,10 @@ export default function App() {
   }
 
   function scrollToEditorPane() {
+    if (conflictDialogActive) {
+      return;
+    }
+
     if (mobileLayout) {
       setMobilePage('editor');
       return;
@@ -615,6 +628,10 @@ export default function App() {
   }
 
   function scrollToFileTree() {
+    if (conflictDialogActive) {
+      return;
+    }
+
     setActiveSidebarTab('select');
 
     if (mobileLayout) {
@@ -1430,6 +1447,23 @@ export default function App() {
     }
   }, [mobileLayout, routeFilePath]);
 
+  useEffect(() => {
+    if (!mobileLayout || (!selectedConflictOperation && !reloadFromServerPrompt)) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      promptRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [mobileLayout, reloadFromServerPrompt, selectedConflictOperation]);
+
   async function loadPublicKey(repoAlias) {
     if (!repoAlias) {
       setPublicKey('');
@@ -1983,6 +2017,10 @@ export default function App() {
   }
 
   async function handleFileSelect(path) {
+    if (conflictDialogActive) {
+      return;
+    }
+
     await loadFile(path, activeRepoAliasRef.current, { routeMode: 'push' });
     flushPendingWrite().catch(() => {});
 
@@ -2600,6 +2638,7 @@ export default function App() {
   const remoteActionsEnabled = connectivityStatus === 'online' && repoError === '';
   const showEditorPane = !mobileLayout || mobilePage === 'editor';
   const showTreePane = !mobileLayout || mobilePage === 'files';
+  const conflictDialogActive = Boolean(reloadFromServerPrompt || selectedConflictOperation);
   const shortDebugBaseCommit =
     typeof debugBaseCommit === 'string' && debugBaseCommit.length >= 8
       ? debugBaseCommit.slice(0, 8)
@@ -2665,6 +2704,7 @@ export default function App() {
                 <button
                   aria-label="Go back to file tree"
                   className="editor-mobile-back"
+                  disabled={conflictDialogActive}
                   onClick={scrollToFileTree}
                   type="button"
                 >
@@ -2674,6 +2714,7 @@ export default function App() {
                   <button
                     aria-label={markdownPreviewActive ? 'Show markdown editor' : 'Show markdown preview'}
                     className="editor-mobile-toggle"
+                    disabled={conflictDialogActive}
                     onClick={() => {
                       setShowMarkdownPreview((current) => !current);
                     }}
@@ -2708,6 +2749,7 @@ export default function App() {
                   <button
                     aria-label={markdownPreviewActive ? 'Show markdown editor' : 'Show markdown preview'}
                     className="editor-preview-toggle"
+                    disabled={conflictDialogActive}
                     onClick={() => {
                       setShowMarkdownPreview((current) => !current);
                     }}
@@ -2733,7 +2775,7 @@ export default function App() {
           </div>
 
           {reloadFromServerPrompt ? (
-            <section className="conflict-prompt" role="alert">
+            <section className="conflict-prompt" ref={promptRef} role="alert">
               <div>
                 <p className="eyebrow">Server Reload Required</p>
                 <h2>Reload the latest server version for this file</h2>
@@ -2754,7 +2796,7 @@ export default function App() {
               </button>
             </section>
           ) : selectedConflictOperation ? (
-            <section className="conflict-prompt" role="alert">
+            <section className="conflict-prompt" ref={promptRef} role="alert">
               <div>
                 <p className="eyebrow">Conflict Detected</p>
                 <h2>Create a merged version with conflict markers</h2>
@@ -2794,13 +2836,17 @@ export default function App() {
                     highlightActiveLineGutter: false,
                   }}
                   className="editor-code"
+                  editable={!conflictDialogActive}
                   extensions={markdownEditorExtensions}
                   onBlur={() => {
                     flushPendingWrite().catch(() => {});
                   }}
                   onChange={(nextValue) => {
-                    updateEditorContent(nextValue);
+                    if (!conflictDialogActive) {
+                      updateEditorContent(nextValue);
+                    }
                   }}
+                  readOnly={conflictDialogActive}
                   spellCheck
                   value={content}
                 />
@@ -2809,6 +2855,7 @@ export default function App() {
                   autoCapitalize="sentences"
                   autoCorrect="on"
                   className="editor-textarea"
+                  disabled={conflictDialogActive}
                   onBlur={() => {
                     flushPendingWrite().catch(() => {});
                   }}
@@ -2869,6 +2916,7 @@ export default function App() {
             <button
               aria-selected={activeSidebarTab === 'select'}
               className={`tab-button ${activeSidebarTab === 'select' ? 'tab-button-active' : ''}`}
+              disabled={conflictDialogActive}
               onClick={() => setActiveSidebarTab('select')}
               role="tab"
               type="button"
@@ -2878,6 +2926,7 @@ export default function App() {
             <button
               aria-selected={activeSidebarTab === 'aliases'}
               className={`tab-button ${activeSidebarTab === 'aliases' ? 'tab-button-active' : ''}`}
+              disabled={conflictDialogActive}
               onClick={() => setActiveSidebarTab('aliases')}
               role="tab"
               type="button"
@@ -3055,6 +3104,7 @@ export default function App() {
           <div className="tree-scroll">
             {activeSidebarTab === 'select' && tree ? (
               <TreeNode
+                disabled={conflictDialogActive}
                 node={tree}
                 onCreateFile={!activeRepoAlias || !remoteActionsEnabled ? null : handleNewFile}
                 onCreateFolder={!activeRepoAlias || !remoteActionsEnabled ? null : handleNewFolder}
