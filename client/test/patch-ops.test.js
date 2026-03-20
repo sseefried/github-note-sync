@@ -1,19 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createReplacePatchOperations } from '../src/local-first/patch-ops.js';
-
-function applyPatchOperations(content, patchOps) {
-  let cursor = 0;
-  let nextContent = '';
-
-  for (const patchOp of patchOps) {
-    nextContent += content.slice(cursor, patchOp.from);
-    nextContent += patchOp.text;
-    cursor = patchOp.to;
-  }
-
-  return nextContent + content.slice(cursor);
-}
+import {
+  applyPatchOperations,
+  createReplacePatchOperations,
+  tryRebaseNonOverlappingChanges,
+} from '../src/local-first/patch-ops.js';
 
 test('createReplacePatchOperations returns no ops when the content is unchanged', () => {
   assert.deepEqual(createReplacePatchOperations('alpha', 'alpha'), []);
@@ -44,4 +35,31 @@ test('createReplacePatchOperations collapses multi-span edits into one ordered r
   assert.equal(patchOps[0].type, 'replace');
   assert.ok(patchOps[0].from <= patchOps[0].to);
   assert.equal(applyPatchOperations(baseContent, patchOps), nextContent);
+});
+
+test('tryRebaseNonOverlappingChanges reapplies local edits onto newer remote content', () => {
+  const result = tryRebaseNonOverlappingChanges(
+    'alpha\nbeta\ngamma\n',
+    'alpha\nbeta local\ngamma\n',
+    'alpha\nbeta\ngamma\nremote tail\n',
+  );
+
+  assert.ok(result);
+  assert.equal(result.mergedContent, 'alpha\nbeta local\ngamma\nremote tail\n');
+});
+
+test('tryRebaseNonOverlappingChanges rejects overlapping local and remote edits', () => {
+  const result = tryRebaseNonOverlappingChanges(
+    'alpha\nbeta\ngamma\n',
+    'alpha\nbeta local\ngamma\n',
+    'alpha\nbeta remote\ngamma\n',
+  );
+
+  assert.equal(result, null);
+});
+
+test('tryRebaseNonOverlappingChanges rejects same-position inserts', () => {
+  const result = tryRebaseNonOverlappingChanges('alpha', 'alpha local', 'alpha remote');
+
+  assert.equal(result, null);
 });

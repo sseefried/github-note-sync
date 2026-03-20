@@ -271,6 +271,7 @@ export function createWorkspaceStoreWithAdapter(adapter) {
     advanceBase = false,
     content,
     filePath,
+    preserveLocalContent = false,
     repoAlias,
     revision,
     updatedAt = makeTimestamp(),
@@ -289,7 +290,10 @@ export function createWorkspaceStoreWithAdapter(adapter) {
     const shouldAdvanceBase = advanceBase || !hasLocalChanges;
 
     const nextSnapshot = {
-      content: shouldAdvanceBase ? content : currentSnapshot.content,
+      content:
+        shouldAdvanceBase && !preserveLocalContent
+          ? content
+          : currentSnapshot?.content ?? content,
       id: createFileRecordId(normalizedRepoAlias, normalizedFilePath),
       path: normalizedFilePath,
       repoAlias: normalizedRepoAlias,

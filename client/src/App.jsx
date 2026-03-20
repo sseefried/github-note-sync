@@ -19,7 +19,10 @@ import {
   parseRepoRoute,
   resolveInitialRepoAlias,
 } from './local-first/route-state.js';
-import { createReplacePatchOperations } from './local-first/patch-ops.js';
+import {
+  createReplacePatchOperations,
+  tryRebaseNonOverlappingChanges,
+} from './local-first/patch-ops.js';
 import { deriveSyncState } from './local-first/sync-state.js';
 
 const SERVER_URL = (import.meta.env.VITE_SERVER_URL ?? '').trim().replace(/\/$/, '');
@@ -560,7 +563,9 @@ export default function App() {
     getConnectivityStatusFromNavigator(),
   );
   const [blockedConflictCount, setBlockedConflictCount] = useState(0);
+  const [applyingFastForward, setApplyingFastForward] = useState(false);
   const [committingConflictMarkers, setCommittingConflictMarkers] = useState(false);
+  const [fastForwardPrompt, setFastForwardPrompt] = useState(null);
   const [pendingOperationCount, setPendingOperationCount] = useState(0);
   const [selectedConflictOperation, setSelectedConflictOperation] = useState(null);
   const [reloadFromServerPrompt, setReloadFromServerPrompt] = useState(null);
@@ -592,6 +597,7 @@ export default function App() {
   const routeFilePathRef = useRef(initialRoute.filePath);
   const activeRepoAliasRef = useRef('');
   const connectivityStatusRef = useRef(getConnectivityStatusFromNavigator());
+  const conflictDialogActiveRef = useRef(false);
   const flushPendingWriteRef = useRef(null);
   const flushTimerRef = useRef(null);
   const loadFileRequestIdRef = useRef(0);
@@ -784,6 +790,12 @@ export default function App() {
   }, [connectivityStatus]);
 
   useEffect(() => {
+    conflictDialogActiveRef.current = Boolean(
+      fastForwardPrompt || reloadFromServerPrompt || selectedConflictOperation,
+    );
+  }, [fastForwardPrompt, reloadFromServerPrompt, selectedConflictOperation]);
+
+  useEffect(() => {
     syncingOperationsRef.current = syncingOperations;
   }, [syncingOperations]);
 
@@ -791,6 +803,7 @@ export default function App() {
     let cancelled = false;
 
     if (!workspaceReady || !activeRepoAlias || !selectedPath) {
+      setFastForwardPrompt(null);
       setSelectedConflictOperation(null);
       setReloadFromServerPrompt(null);
       return () => {
@@ -1092,6 +1105,10 @@ export default function App() {
       return;
     }
 
+    if (conflictDialogActiveRef.current) {
+      return;
+    }
+
     if (connectivityStatusRef.current === 'offline') {
       return;
     }
@@ -1225,15 +1242,69 @@ export default function App() {
       ) {
         setConnectivityStatus('online');
 
+        const currentContent =
+          typeof error.payload?.currentContent === 'string' ? error.payload.currentContent : null;
+        const currentRevision =
+          typeof error.payload?.currentRevision === 'string' ? error.payload.currentRevision : null;
+        const headRevision =
+          typeof error.payload?.headRevision === 'string' ? error.payload.headRevision : null;
+        const fileSnapshot = await workspaceStore.getFileSnapshot(
+          activeOperation.repoAlias,
+          activeOperation.path,
+        );
+        const baseContent =
+          typeof fileSnapshot?.serverContent === 'string' ? fileSnapshot.serverContent : null;
+        const fastForwardResult =
+          typeof baseContent === 'string' &&
+          typeof currentContent === 'string' &&
+          typeof currentRevision === 'string' &&
+          typeof headRevision === 'string'
+            ? tryRebaseNonOverlappingChanges(
+                baseContent,
+                activeOperation.targetContent,
+                currentContent,
+              )
+            : null;
+
+        if (fastForwardResult) {
+          setFastForwardPrompt({
+            baseCommit:
+              typeof activeOperation.baseCommit === 'string' ? activeOperation.baseCommit : null,
+            baseRevision: activeOperation.baseRevision,
+            currentContent,
+            currentRevision,
+            headRevision,
+            mergedContent: fastForwardResult.mergedContent,
+            path: activeOperation.path,
+            repoAlias: activeOperation.repoAlias,
+          });
+          setReloadFromServerPrompt(null);
+          setSelectedConflictOperation(null);
+          setSaveError(
+            `The server has newer non-overlapping changes for ${activeOperation.path}. Press OK to pull them in and continue syncing.`,
+          );
+          setStatus((currentStatus) =>
+            currentStatus
+              ? {
+                  ...currentStatus,
+                  lastSyncMessage: `Non-overlapping server changes detected in ${activeOperation.path}. Press OK to pull them in and continue syncing.`,
+                  lastSyncStatus: 'error',
+                }
+              : currentStatus,
+          );
+          activeOperation = null;
+          return;
+        }
+
         if (
-          typeof error.payload?.currentContent === 'string' &&
-          typeof error.payload?.currentRevision === 'string'
+          typeof currentContent === 'string' &&
+          typeof currentRevision === 'string'
         ) {
           await workspaceStore.saveServerFileSnapshot({
-            content: error.payload.currentContent,
+            content: currentContent,
             filePath: activeOperation.path,
             repoAlias: activeOperation.repoAlias,
-            revision: error.payload.currentRevision,
+            revision: currentRevision,
           });
         }
 
@@ -1448,7 +1519,7 @@ export default function App() {
   }, [mobileLayout, routeFilePath]);
 
   useEffect(() => {
-    if (!mobileLayout || (!selectedConflictOperation && !reloadFromServerPrompt)) {
+    if (!mobileLayout || (!fastForwardPrompt && !selectedConflictOperation && !reloadFromServerPrompt)) {
       return;
     }
 
@@ -1462,7 +1533,7 @@ export default function App() {
     return () => {
       window.cancelAnimationFrame(frameId);
     };
-  }, [mobileLayout, reloadFromServerPrompt, selectedConflictOperation]);
+  }, [fastForwardPrompt, mobileLayout, reloadFromServerPrompt, selectedConflictOperation]);
 
   async function loadPublicKey(repoAlias) {
     if (!repoAlias) {
@@ -1576,6 +1647,7 @@ export default function App() {
     setSaveError('');
 
     if (switchingFiles) {
+      setFastForwardPrompt(null);
       setSelectedConflictOperation(null);
       setReloadFromServerPrompt(null);
     }
@@ -2469,6 +2541,85 @@ export default function App() {
     }
   }
 
+  async function handleApplyFastForward() {
+    const prompt = fastForwardPrompt;
+    const workspaceStore = workspaceStoreRef.current;
+
+    if (!workspaceStore || !prompt) {
+      return;
+    }
+
+    setApplyingFastForward(true);
+    setSaveError('');
+
+    try {
+      await workspaceStore.clearPendingOperation(prompt.repoAlias, prompt.path);
+      await workspaceStore.saveLocalFileContent({
+        content: prompt.mergedContent,
+        filePath: prompt.path,
+        repoAlias: prompt.repoAlias,
+      });
+      await workspaceStore.saveServerFileSnapshot({
+        advanceBase: true,
+        content: prompt.currentContent,
+        filePath: prompt.path,
+        preserveLocalContent: true,
+        repoAlias: prompt.repoAlias,
+        revision: prompt.currentRevision,
+      });
+      await workspaceStore.saveRepoSnapshot({
+        headRevision: prompt.headRevision,
+        repoAlias: prompt.repoAlias,
+        selectedPath: prompt.path,
+        status: statusRef.current,
+        tree: prompt.repoAlias === activeRepoAliasRef.current ? tree : undefined,
+      });
+
+      if (
+        prompt.repoAlias === activeRepoAliasRef.current &&
+        prompt.path === selectedPathRef.current
+      ) {
+        setContent(prompt.mergedContent);
+      }
+
+      conflictDialogActiveRef.current = false;
+      setFastForwardPrompt(null);
+      setConnectivityStatus('online');
+      setStatus((currentStatus) =>
+        currentStatus
+          ? {
+              ...currentStatus,
+              lastSyncMessage: `Pulled in newer non-overlapping server changes for ${prompt.path}. Retrying sync.`,
+              lastSyncStatus: 'dirty',
+            }
+          : currentStatus,
+      );
+
+      const nextOperation = await preparePendingOperation(prompt.repoAlias, prompt.path);
+
+      if (nextOperation) {
+        await flushPendingWrite();
+      } else {
+        await syncOperationCounts(workspaceStore);
+      }
+    } catch (error) {
+      if (handleUnauthorized(error)) {
+        return;
+      }
+
+      if (isNetworkFailure(error)) {
+        setConnectivityStatus(getConnectivityStatusFromError());
+        setSaveError('The server is unreachable right now. Reconnect and press OK again.');
+      } else {
+        setSaveError(error.message);
+      }
+
+      setFastForwardPrompt(prompt);
+    } finally {
+      setApplyingFastForward(false);
+    }
+  }
+
   async function handleReloadConflictFromServer() {
     const operation = reloadFromServerPrompt;
     const workspaceStore = workspaceStoreRef.current;
@@ -2638,7 +2789,9 @@ export default function App() {
   const remoteActionsEnabled = connectivityStatus === 'online' && repoError === '';
   const showEditorPane = !mobileLayout || mobilePage === 'editor';
   const showTreePane = !mobileLayout || mobilePage === 'files';
-  const conflictDialogActive = Boolean(reloadFromServerPrompt || selectedConflictOperation);
+  const conflictDialogActive = Boolean(
+    fastForwardPrompt || reloadFromServerPrompt || selectedConflictOperation,
+  );
   const shortDebugBaseCommit =
     typeof debugBaseCommit === 'string' && debugBaseCommit.length >= 8
       ? debugBaseCommit.slice(0, 8)
@@ -2793,6 +2946,27 @@ export default function App() {
                 type="button"
               >
                 {reloadingConflictFromServer ? 'Reloading…' : 'OK'}
+              </button>
+            </section>
+          ) : fastForwardPrompt ? (
+            <section className="conflict-prompt" ref={promptRef} role="alert">
+              <div>
+                <p className="eyebrow">Server Changes Available</p>
+                <h2>Pull in newer non-overlapping server changes</h2>
+                <p>
+                  Press <strong>OK</strong> to pull in the newer non-overlapping server changes for{' '}
+                  <code>{fastForwardPrompt.path}</code>, keep your local edits, and continue syncing
+                  automatically.
+                </p>
+                {saveError ? <p className="conflict-prompt-feedback">{saveError}</p> : null}
+              </div>
+              <button
+                className="solid-button"
+                disabled={applyingFastForward || !remoteActionsEnabled}
+                onClick={handleApplyFastForward}
+                type="button"
+              >
+                {applyingFastForward ? 'Applying…' : 'OK'}
               </button>
             </section>
           ) : selectedConflictOperation ? (

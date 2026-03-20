@@ -159,6 +159,35 @@ test('saveServerFileSnapshot can explicitly advance the server base after sync',
   assert.equal(fileSnapshot.revision, 'sha256:beta');
 });
 
+test('saveServerFileSnapshot can advance the server base while preserving merged local content', async () => {
+  const store = createStore();
+
+  await store.saveServerFileSnapshot({
+    content: 'alpha',
+    filePath: 'notes/today.md',
+    repoAlias: 'personal',
+    revision: 'sha256:alpha',
+  });
+  await store.saveLocalFileContent({
+    content: 'alpha local',
+    filePath: 'notes/today.md',
+    repoAlias: 'personal',
+  });
+
+  const fileSnapshot = await store.saveServerFileSnapshot({
+    advanceBase: true,
+    content: 'alpha remote',
+    filePath: 'notes/today.md',
+    preserveLocalContent: true,
+    repoAlias: 'personal',
+    revision: 'sha256:remote',
+  });
+
+  assert.equal(fileSnapshot.content, 'alpha local');
+  assert.equal(fileSnapshot.serverContent, 'alpha remote');
+  assert.equal(fileSnapshot.revision, 'sha256:remote');
+});
+
 test('blocked conflicts are excluded from pending counts', async () => {
   const store = createStore();
 
