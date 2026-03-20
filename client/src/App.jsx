@@ -1030,37 +1030,34 @@ export default function App() {
     let nextOperation = null;
 
     if (typeof fileSnapshot.revision !== 'string' || fileSnapshot.revision.trim() === '') {
-      nextOperation = await workspaceStore.upsertPendingOperation({
-        baseCommit: repoSnapshot?.headRevision ?? null,
-        filePath,
-        kind: 'legacy_full_content',
-        payload: null,
+      await workspaceStore.clearPendingOperation(repoAlias, filePath);
+      await syncOperationCounts(workspaceStore);
+      return {
+        path: filePath,
         repoAlias,
-        status: 'pending',
-        targetContent: fileSnapshot.content,
-        updatedAt,
-      });
-    } else {
-      const patchOps = createReplacePatchOperations(fileSnapshot.serverContent, fileSnapshot.content);
-
-      if (patchOps.length === 0) {
-        await workspaceStore.clearPendingOperation(repoAlias, filePath);
-        await syncOperationCounts(workspaceStore);
-        return null;
-      }
-
-      nextOperation = await workspaceStore.upsertPendingOperation({
-        baseCommit: repoSnapshot?.headRevision ?? null,
-        baseRevision: fileSnapshot.revision,
-        filePath,
-        kind: 'patch',
-        payload: { ops: patchOps },
-        repoAlias,
-        status: 'pending',
-        targetContent: fileSnapshot.content,
-        updatedAt,
-      });
+        status: 'missing_revision',
+      };
     }
+
+    const patchOps = createReplacePatchOperations(fileSnapshot.serverContent, fileSnapshot.content);
+
+    if (patchOps.length === 0) {
+      await workspaceStore.clearPendingOperation(repoAlias, filePath);
+      await syncOperationCounts(workspaceStore);
+      return null;
+    }
+
+    nextOperation = await workspaceStore.upsertPendingOperation({
+      baseCommit: repoSnapshot?.headRevision ?? null,
+      baseRevision: fileSnapshot.revision,
+      filePath,
+      kind: 'patch',
+      payload: { ops: patchOps },
+      repoAlias,
+      status: 'pending',
+      targetContent: fileSnapshot.content,
+      updatedAt,
+    });
 
     await syncOperationCounts(workspaceStore);
     return nextOperation;
@@ -1125,29 +1122,7 @@ export default function App() {
 
         let data = null;
 
-        if (activeOperation.kind === 'legacy_full_content') {
-          data = await fetchJson('/api/file', {
-            body: JSON.stringify({
-              content: activeOperation.targetContent,
-              path: activeOperation.path,
-              repoAlias: activeOperation.repoAlias,
-            }),
-            keepalive,
-            method: 'PUT',
-          });
-
-          const serverFileState = await fetchJson(
-            `/api/file?repoAlias=${encodeURIComponent(activeOperation.repoAlias)}&path=${encodeURIComponent(activeOperation.path)}`,
-          );
-
-          await workspaceStore.acknowledgeOperation({
-            content: serverFileState.content,
-            filePath: activeOperation.path,
-            opId: activeOperation.opId,
-            repoAlias: activeOperation.repoAlias,
-            revision: serverFileState.revision ?? null,
-          });
-        } else if (activeOperation.kind === 'patch') {
+        if (activeOperation.kind === 'patch') {
           data = await fetchJson('/api/ops', {
             body: JSON.stringify({
               ops: [
@@ -2334,7 +2309,13 @@ export default function App() {
         updatedAt,
       })
       .then(async () => {
-        await preparePendingOperation(activeRepoAliasRef.current, activePath);
+        const operation = await preparePendingOperation(activeRepoAliasRef.current, activePath);
+
+        if (operation?.status === 'missing_revision') {
+          setSaveError(
+            `Refresh ${activePath} from the server before syncing edits from this old cached copy.`,
+          );
+        }
       })
       .catch((error) => {
         setSaveError(error.message);

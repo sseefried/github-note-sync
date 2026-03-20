@@ -208,9 +208,10 @@ test('listKnownRepoAliases combines cached repo snapshots and pending operations
     tree: { children: [], name: 'personal', path: '', type: 'directory' },
   });
   await store.upsertPendingOperation({
+    baseRevision: 'sha256:todo',
     filePath: 'todo.md',
-    kind: 'legacy_full_content',
-    payload: null,
+    kind: 'patch',
+    payload: { ops: [] },
     repoAlias: 'work',
     targetContent: '# todo',
   });

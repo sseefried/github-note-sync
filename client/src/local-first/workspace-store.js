@@ -79,7 +79,10 @@ function normalizeLegacyPendingOperation(record) {
       createdAt: typeof record.updatedAt === 'string' ? record.updatedAt : makeTimestamp(),
       id: createFileRecordId(record.repoAlias, record.path),
       kind: 'legacy_full_content',
-      lastError: typeof record.lastError === 'string' ? record.lastError : '',
+      lastError:
+        typeof record.lastError === 'string' && record.lastError.trim() !== ''
+          ? record.lastError
+          : 'This cached write predates revision tracking. Refresh the file before syncing again.',
       opId:
         typeof record.writeId === 'string' && record.writeId.trim() !== ''
           ? record.writeId
@@ -87,7 +90,7 @@ function normalizeLegacyPendingOperation(record) {
       path: record.path,
       payload: null,
       repoAlias: record.repoAlias,
-      status: 'pending',
+      status: 'blocked_invalid',
       targetContent: record.content,
       updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : makeTimestamp(),
     };
