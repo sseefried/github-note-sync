@@ -101,6 +101,14 @@ function getConnectivityStatusFromError() {
   return typeof navigator !== 'undefined' && navigator.onLine ? 'degraded' : 'offline';
 }
 
+function isUnavailableBaseCommitError(error) {
+  return (
+    error instanceof ApiError &&
+    error.status === 409 &&
+    /^Base commit .+ is no longer available on the server\.$/.test(error.message)
+  );
+}
+
 function findFirstFile(node) {
   if (!node) {
     return null;
@@ -547,6 +555,8 @@ export default function App() {
   const [committingConflictMarkers, setCommittingConflictMarkers] = useState(false);
   const [pendingOperationCount, setPendingOperationCount] = useState(0);
   const [selectedConflictOperation, setSelectedConflictOperation] = useState(null);
+  const [reloadFromServerPrompt, setReloadFromServerPrompt] = useState(null);
+  const [reloadingConflictFromServer, setReloadingConflictFromServer] = useState(false);
   const [syncingOperations, setSyncingOperations] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     if (typeof window === 'undefined') {
@@ -759,6 +769,7 @@ export default function App() {
 
     if (!workspaceReady || !activeRepoAlias || !selectedPath) {
       setSelectedConflictOperation(null);
+      setReloadFromServerPrompt(null);
       return () => {
         cancelled = true;
       };
@@ -1492,6 +1503,7 @@ export default function App() {
 
     if (switchingFiles) {
       setSelectedConflictOperation(null);
+      setReloadFromServerPrompt(null);
     }
 
     setSelectedPath(path);
@@ -1571,6 +1583,7 @@ export default function App() {
 
   async function loadState({
     forceReloadFile = false,
+    preferLocalWhenReloadingFile = true,
     refreshFileOnStateChange = true,
     repoAlias = activeRepoAliasRef.current,
   } = {}) {
@@ -1627,7 +1640,7 @@ export default function App() {
           (refreshFileOnStateChange && stateChanged))
       ) {
         await loadFile(nextSelectedPath, repoAlias, {
-          preferLocal: true,
+          preferLocal: preferLocalWhenReloadingFile,
           routeMode: 'replace',
         });
       } else if (!nextSelectedPath) {
@@ -2290,9 +2303,12 @@ export default function App() {
     const baseCommit = operation.conflict?.baseCommit ?? operation.baseCommit ?? null;
 
     if (typeof baseCommit !== 'string' || baseCommit.trim() === '') {
-      setSaveError(
-        `The client does not have a base commit for ${operation.path}. Refresh the repo and retry the conflict.`,
-      );
+      setSaveError('');
+      setSelectedConflictOperation(null);
+      setReloadFromServerPrompt({
+        path: operation.path,
+        repoAlias: operation.repoAlias,
+      });
       return;
     }
 
@@ -2349,11 +2365,57 @@ export default function App() {
       if (isNetworkFailure(error)) {
         setConnectivityStatus(getConnectivityStatusFromError());
         setSaveError('The server is unreachable right now. Reconnect and press OK again.');
+      } else if (isUnavailableBaseCommitError(error)) {
+        setSaveError('');
+        setSelectedConflictOperation(null);
+        setReloadFromServerPrompt({
+          path: operation.path,
+          repoAlias: operation.repoAlias,
+        });
       } else {
         setSaveError(error.message);
       }
     } finally {
       setCommittingConflictMarkers(false);
+    }
+  }
+
+  async function handleReloadConflictFromServer() {
+    const operation = reloadFromServerPrompt;
+    const workspaceStore = workspaceStoreRef.current;
+
+    if (!workspaceStore || !operation) {
+      return;
+    }
+
+    setReloadingConflictFromServer(true);
+    setSaveError('');
+
+    try {
+      await workspaceStore.clearPendingOperation(operation.repoAlias, operation.path);
+      await syncOperationCounts(workspaceStore);
+      setSelectedConflictOperation(null);
+      setReloadFromServerPrompt(null);
+      await loadState({
+        forceReloadFile: true,
+        preferLocalWhenReloadingFile: false,
+        repoAlias: operation.repoAlias,
+      });
+    } catch (error) {
+      if (handleUnauthorized(error)) {
+        return;
+      }
+
+      if (isNetworkFailure(error)) {
+        setConnectivityStatus(getConnectivityStatusFromError());
+        setSaveError('The server is unreachable right now. Reconnect and press OK again.');
+      } else {
+        setSaveError(error.message);
+      }
+
+      setReloadFromServerPrompt(operation);
+    } finally {
+      setReloadingConflictFromServer(false);
     }
   }
 
@@ -2606,7 +2668,28 @@ export default function App() {
             <span>{syncState.detail}</span>
           </div>
 
-          {selectedConflictOperation ? (
+          {reloadFromServerPrompt ? (
+            <section className="conflict-prompt" role="alert">
+              <div>
+                <p className="eyebrow">Server Reload Required</p>
+                <h2>Reload the latest server version for this file</h2>
+                <p>
+                  The original base commit for <code>{reloadFromServerPrompt.path}</code> is no
+                  longer available. Press <strong>OK</strong> to discard the blocked local conflict
+                  flow and reload the latest server version of this file.
+                </p>
+                {saveError ? <p className="conflict-prompt-feedback">{saveError}</p> : null}
+              </div>
+              <button
+                className="solid-button"
+                disabled={reloadingConflictFromServer || !remoteActionsEnabled}
+                onClick={handleReloadConflictFromServer}
+                type="button"
+              >
+                {reloadingConflictFromServer ? 'Reloading…' : 'OK'}
+              </button>
+            </section>
+          ) : selectedConflictOperation ? (
             <section className="conflict-prompt" role="alert">
               <div>
                 <p className="eyebrow">Conflict Detected</p>
