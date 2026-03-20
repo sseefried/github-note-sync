@@ -265,6 +265,7 @@ export function createWorkspaceStoreWithAdapter(adapter) {
   }
 
   async function saveServerFileSnapshot({
+    advanceBase = false,
     content,
     filePath,
     repoAlias,
@@ -282,14 +283,23 @@ export function createWorkspaceStoreWithAdapter(adapter) {
     const hasLocalChanges =
       currentSnapshot &&
       currentSnapshot.content !== currentSnapshot.serverContent;
+    const shouldAdvanceBase = advanceBase || !hasLocalChanges;
 
     const nextSnapshot = {
-      content: hasLocalChanges ? currentSnapshot.content : content,
+      content: shouldAdvanceBase ? content : currentSnapshot.content,
       id: createFileRecordId(normalizedRepoAlias, normalizedFilePath),
       path: normalizedFilePath,
       repoAlias: normalizedRepoAlias,
-      revision: typeof revision === 'string' ? revision : currentSnapshot?.revision ?? null,
-      serverContent: content,
+      revision:
+        shouldAdvanceBase && typeof revision === 'string'
+          ? revision
+          : currentSnapshot?.revision ?? null,
+      serverContent:
+        shouldAdvanceBase
+          ? content
+          : typeof currentSnapshot?.serverContent === 'string'
+            ? currentSnapshot.serverContent
+            : currentSnapshot?.content ?? content,
       updatedAt,
     };
 
@@ -461,6 +471,7 @@ export function createWorkspaceStoreWithAdapter(adapter) {
     await Promise.all([
       clearPendingOperation(repoAlias, filePath),
       saveServerFileSnapshot({
+        advanceBase: true,
         content,
         filePath: currentOperation.path,
         repoAlias: currentOperation.repoAlias,

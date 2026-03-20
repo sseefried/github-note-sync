@@ -104,7 +104,7 @@ test('acknowledgeOperation ignores stale op ids and keeps newer local edits queu
   assert.equal(fileSnapshot.revision, 'sha256:two');
 });
 
-test('saveServerFileSnapshot preserves newer local content while refreshing server revision', async () => {
+test('saveServerFileSnapshot preserves the existing server base while local edits are dirty', async () => {
   const store = createStore();
 
   await store.saveServerFileSnapshot({
@@ -127,8 +127,36 @@ test('saveServerFileSnapshot preserves newer local content while refreshing serv
   });
 
   assert.equal(fileSnapshot.content, 'beta');
-  assert.equal(fileSnapshot.serverContent, 'gamma');
-  assert.equal(fileSnapshot.revision, 'sha256:gamma');
+  assert.equal(fileSnapshot.serverContent, 'alpha');
+  assert.equal(fileSnapshot.revision, 'sha256:alpha');
+});
+
+test('saveServerFileSnapshot can explicitly advance the server base after sync', async () => {
+  const store = createStore();
+
+  await store.saveServerFileSnapshot({
+    content: 'alpha',
+    filePath: 'notes/today.md',
+    repoAlias: 'personal',
+    revision: 'sha256:alpha',
+  });
+  await store.saveLocalFileContent({
+    content: 'beta',
+    filePath: 'notes/today.md',
+    repoAlias: 'personal',
+  });
+
+  const fileSnapshot = await store.saveServerFileSnapshot({
+    advanceBase: true,
+    content: 'beta',
+    filePath: 'notes/today.md',
+    repoAlias: 'personal',
+    revision: 'sha256:beta',
+  });
+
+  assert.equal(fileSnapshot.content, 'beta');
+  assert.equal(fileSnapshot.serverContent, 'beta');
+  assert.equal(fileSnapshot.revision, 'sha256:beta');
 });
 
 test('blocked conflicts are excluded from pending counts', async () => {

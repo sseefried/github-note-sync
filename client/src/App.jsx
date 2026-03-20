@@ -1207,6 +1207,17 @@ export default function App() {
           setStatus(data.status);
         }
 
+        await workspaceStore.saveRepoSnapshot({
+          headRevision: data.headRevision ?? null,
+          repoAlias: activeOperation.repoAlias,
+          selectedPath:
+            activeOperation.repoAlias === activeRepoAliasRef.current
+              ? selectedPathRef.current
+              : undefined,
+          status: data.status,
+          tree: activeOperation.repoAlias === activeRepoAliasRef.current ? tree : undefined,
+        });
+
         await preparePendingOperation(activeOperation.repoAlias, activeOperation.path);
         activeOperation = null;
       }
@@ -1538,7 +1549,7 @@ export default function App() {
   async function loadFile(
     path,
     repoAlias = activeRepoAliasRef.current,
-    { preferLocal = true, routeMode = 'replace' } = {},
+    { advanceBaseOnFetch = false, preferLocal = true, routeMode = 'replace' } = {},
   ) {
     if (!path || !repoAlias) {
       setContent('');
@@ -1594,6 +1605,7 @@ export default function App() {
       setConnectivityStatus('online');
       setSelectedPath(path);
       const savedSnapshot = await workspaceStore?.saveServerFileSnapshot({
+        advanceBase: advanceBaseOnFetch,
         content: data.content,
         filePath: path,
         repoAlias,
@@ -1636,6 +1648,7 @@ export default function App() {
   }
 
   async function loadState({
+    advanceBaseWhenReloadingFile = false,
     forceReloadFile = false,
     preferLocalWhenReloadingFile = true,
     refreshFileOnStateChange = true,
@@ -1694,6 +1707,7 @@ export default function App() {
           (refreshFileOnStateChange && stateChanged))
       ) {
         await loadFile(nextSelectedPath, repoAlias, {
+          advanceBaseOnFetch: advanceBaseWhenReloadingFile,
           preferLocal: preferLocalWhenReloadingFile,
           routeMode: 'replace',
         });
@@ -2390,12 +2404,14 @@ export default function App() {
         repoAlias: operation.repoAlias,
       });
       await workspaceStore.saveServerFileSnapshot({
+        advanceBase: true,
         content: data.file.content,
         filePath: operation.path,
         repoAlias: operation.repoAlias,
         revision: data.file.revision ?? null,
       });
       await workspaceStore.saveRepoSnapshot({
+        headRevision: data.headRevision ?? null,
         repoAlias: operation.repoAlias,
         selectedPath: operation.path,
         status: data.status ?? statusRef.current,
@@ -2451,6 +2467,7 @@ export default function App() {
       setSelectedConflictOperation(null);
       setReloadFromServerPrompt(null);
       await loadState({
+        advanceBaseWhenReloadingFile: true,
         forceReloadFile: true,
         preferLocalWhenReloadingFile: false,
         repoAlias: operation.repoAlias,
