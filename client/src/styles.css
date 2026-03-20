@@ -331,6 +331,12 @@ select {
   line-height: 1.5;
 }
 
+.conflict-prompt-feedback {
+  margin-top: 10px !important;
+  color: #8a2e20;
+  font-weight: 600;
+}
+
 .conflict-prompt code {
   font-size: 0.9em;
 }

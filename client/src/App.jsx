@@ -1134,6 +1134,8 @@ export default function App() {
         error.status === 409 &&
         activeOperation
       ) {
+        setConnectivityStatus('online');
+
         const currentFileSnapshot = await workspaceStore.getFileSnapshot(
           activeOperation.repoAlias,
           activeOperation.path,
@@ -1467,18 +1469,23 @@ export default function App() {
     const workspaceStore = workspaceStoreRef.current;
     setLoadingFile(true);
     setSaveError('');
+    setSelectedConflictOperation(null);
+    setSelectedPath(path);
+
+    if (routeMode !== false) {
+      navigateToRoute(repoAlias, path, { replace: routeMode !== 'push' });
+    }
 
     try {
       if (preferLocal) {
         const cachedFileSnapshot = await workspaceStore?.getFileSnapshot(repoAlias, path);
 
+        await workspaceStore?.rememberSelectedPath(repoAlias, path);
+
         if (cachedFileSnapshot) {
           setContent(cachedFileSnapshot.content);
-          setSelectedPath(path);
-          await workspaceStore?.rememberSelectedPath(repoAlias, path);
-          if (routeMode !== false) {
-            navigateToRoute(repoAlias, path, { replace: routeMode !== 'push' });
-          }
+        } else {
+          setContent('');
         }
       }
 
@@ -1496,9 +1503,6 @@ export default function App() {
       });
       setContent(savedSnapshot?.content ?? data.content);
       await workspaceStore?.rememberSelectedPath(repoAlias, path);
-      if (routeMode !== false) {
-        navigateToRoute(repoAlias, path, { replace: routeMode !== 'push' });
-      }
     } catch (error) {
       if (handleUnauthorized(error)) {
         return;
@@ -1511,10 +1515,6 @@ export default function App() {
 
         if (cachedFileSnapshot) {
           setContent(cachedFileSnapshot.content);
-          setSelectedPath(path);
-          if (routeMode !== false) {
-            navigateToRoute(repoAlias, path, { replace: routeMode !== 'push' });
-          }
           setSaveError('Offline. Showing cached local content.');
           return;
         }
@@ -1882,8 +1882,8 @@ export default function App() {
   }
 
   async function handleFileSelect(path) {
-    await flushPendingWrite();
     await loadFile(path, activeRepoAliasRef.current, { routeMode: 'push' });
+    flushPendingWrite().catch(() => {});
 
     if (isMobileLayout()) {
       scrollToEditorPane();
@@ -2303,9 +2303,10 @@ export default function App() {
 
       if (isNetworkFailure(error)) {
         setConnectivityStatus(getConnectivityStatusFromError());
+        setSaveError('The server is unreachable right now. Reconnect and press OK again.');
+      } else {
+        setSaveError(error.message);
       }
-
-      setSaveError(error.message);
     } finally {
       setCommittingConflictMarkers(false);
     }
@@ -2570,6 +2571,7 @@ export default function App() {
                   <code>{selectedConflictOperation.path}</code> that keeps both sides and inserts
                   Git conflict markers where they overlap.
                 </p>
+                {saveError ? <p className="conflict-prompt-feedback">{saveError}</p> : null}
               </div>
               <button
                 className="solid-button"
