@@ -187,6 +187,13 @@ select {
   gap: 10px;
 }
 
+.header-debug-commit {
+  margin: 6px 0 0;
+  color: rgba(32, 35, 41, 0.62);
+  font-size: 0.82rem;
+  letter-spacing: 0.03em;
+}
+
 .tree-header-actions {
   display: inline-flex;
   align-items: center;

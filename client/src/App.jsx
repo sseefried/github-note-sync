@@ -558,6 +558,7 @@ export default function App() {
   const [reloadFromServerPrompt, setReloadFromServerPrompt] = useState(null);
   const [reloadingConflictFromServer, setReloadingConflictFromServer] = useState(false);
   const [syncingOperations, setSyncingOperations] = useState(false);
+  const [debugBaseCommit, setDebugBaseCommit] = useState(null);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     if (typeof window === 'undefined') {
       return DEFAULT_SIDEBAR_WIDTH;
@@ -801,6 +802,46 @@ export default function App() {
       cancelled = true;
     };
   }, [activeRepoAlias, blockedConflictCount, selectedPath, workspaceReady]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!workspaceReady || !activeRepoAlias) {
+      setDebugBaseCommit(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    Promise.all([
+      workspaceStoreRef.current?.getRepoSnapshot(activeRepoAlias) ?? null,
+      selectedPath ? workspaceStoreRef.current?.getPendingOperation(activeRepoAlias, selectedPath) : null,
+    ])
+      .then(([repoSnapshot, pendingOperation]) => {
+        if (cancelled) {
+          return;
+        }
+
+        const nextBaseCommit =
+          pendingOperation?.conflict?.baseCommit ??
+          pendingOperation?.baseCommit ??
+          repoSnapshot?.headRevision ??
+          null;
+
+        setDebugBaseCommit(
+          typeof nextBaseCommit === 'string' && nextBaseCommit.trim() !== '' ? nextBaseCommit : null,
+        );
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDebugBaseCommit(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRepoAlias, blockedConflictCount, pendingOperationCount, selectedPath, workspaceReady]);
 
   useEffect(() => {
     function handlePopState() {
@@ -2553,6 +2594,10 @@ export default function App() {
   const remoteActionsEnabled = connectivityStatus === 'online' && repoError === '';
   const showEditorPane = !mobileLayout || mobilePage === 'editor';
   const showTreePane = !mobileLayout || mobilePage === 'files';
+  const shortDebugBaseCommit =
+    typeof debugBaseCommit === 'string' && debugBaseCommit.length >= 8
+      ? debugBaseCommit.slice(0, 8)
+      : debugBaseCommit;
 
   if (appError) {
     return (
@@ -2632,7 +2677,12 @@ export default function App() {
                     {markdownPreviewActive ? '#' : '<>'}
                   </button>
                 ) : null}
-                <h1>{mobileEditorTitle}</h1>
+                <div>
+                  <h1>{mobileEditorTitle}</h1>
+                  {shortDebugBaseCommit ? (
+                    <p className="header-debug-commit">base:{shortDebugBaseCommit}</p>
+                  ) : null}
+                </div>
               </div>
               <SyncBadge compact syncState={syncState} />
             </header>
@@ -2642,6 +2692,9 @@ export default function App() {
                 <div>
                   <p className="eyebrow">Editor</p>
                   <h1>{title}</h1>
+                  {shortDebugBaseCommit ? (
+                    <p className="header-debug-commit">base:{shortDebugBaseCommit}</p>
+                  ) : null}
                 </div>
               </div>
               <div className="header-actions">
