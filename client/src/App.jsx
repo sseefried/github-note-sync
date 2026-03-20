@@ -573,6 +573,7 @@ export default function App() {
   const connectivityStatusRef = useRef(getConnectivityStatusFromNavigator());
   const flushPendingWriteRef = useRef(null);
   const flushTimerRef = useRef(null);
+  const loadFileRequestIdRef = useRef(0);
   const syncingOperationsRef = useRef(false);
   const workspaceStoreRef = useRef(null);
   const resizeCleanupRef = useRef(null);
@@ -1486,6 +1487,9 @@ export default function App() {
     const workspaceStore = workspaceStoreRef.current;
     const switchingFiles =
       repoAlias !== activeRepoAliasRef.current || path !== selectedPathRef.current;
+    const requestId = loadFileRequestIdRef.current + 1;
+
+    loadFileRequestIdRef.current = requestId;
 
     setLoadingFile(true);
     setSaveError('');
@@ -1506,6 +1510,10 @@ export default function App() {
 
         await workspaceStore?.rememberSelectedPath(repoAlias, path);
 
+        if (loadFileRequestIdRef.current !== requestId) {
+          return;
+        }
+
         if (cachedFileSnapshot) {
           setContent(cachedFileSnapshot.content);
         } else {
@@ -1516,6 +1524,10 @@ export default function App() {
       const data = await fetchJson(
         `/api/file?repoAlias=${encodeURIComponent(repoAlias)}&path=${encodeURIComponent(path)}`,
       );
+
+      if (loadFileRequestIdRef.current !== requestId) {
+        return;
+      }
 
       setConnectivityStatus('online');
       setSelectedPath(path);
@@ -1537,6 +1549,10 @@ export default function App() {
 
         const cachedFileSnapshot = await workspaceStore?.getFileSnapshot(repoAlias, path);
 
+        if (loadFileRequestIdRef.current !== requestId) {
+          return;
+        }
+
         if (cachedFileSnapshot) {
           setContent(cachedFileSnapshot.content);
           setSaveError('Offline. Showing cached local content.');
@@ -1544,10 +1560,16 @@ export default function App() {
         }
       }
 
+      if (loadFileRequestIdRef.current !== requestId) {
+        return;
+      }
+
       setSaveError(error.message);
     } finally {
-      await syncSelectedConflictOperation({ filePath: path, repoAlias });
-      setLoadingFile(false);
+      if (loadFileRequestIdRef.current === requestId) {
+        await syncSelectedConflictOperation({ filePath: path, repoAlias });
+        setLoadingFile(false);
+      }
     }
   }
 
