@@ -23,6 +23,7 @@ import {
   createReplacePatchOperations,
   tryRebaseNonOverlappingChanges,
 } from './local-first/patch-ops.js';
+import { classifyFetchedFileSync } from './local-first/file-sync.js';
 import { deriveSyncState } from './local-first/sync-state.js';
 
 const SERVER_URL = (import.meta.env.VITE_SERVER_URL ?? '').trim().replace(/\/$/, '');
@@ -1043,7 +1044,17 @@ export default function App() {
       return null;
     }
 
-    if (currentOperation?.status === 'sent' || currentOperation?.status === 'blocked_invalid') {
+    if (currentOperation?.status === 'sent') {
+      if (
+        currentOperation.targetContent === fileSnapshot.content &&
+        currentOperation.baseRevision === fileSnapshot.revision
+      ) {
+        await syncOperationCounts(workspaceStore);
+        return currentOperation;
+      }
+    }
+
+    if (currentOperation?.status === 'blocked_invalid') {
       await syncOperationCounts(workspaceStore);
       return currentOperation;
     }
@@ -1274,6 +1285,7 @@ export default function App() {
             currentContent,
             currentRevision,
             headRevision,
+            kind: 'replay_local',
             mergedContent: fastForwardResult.mergedContent,
             path: activeOperation.path,
             repoAlias: activeOperation.repoAlias,
@@ -1626,6 +1638,53 @@ export default function App() {
     return true;
   }
 
+  async function adoptFetchedFile({
+    content,
+    headRevision = null,
+    path,
+    repoAlias,
+    revision,
+    setEditorContent = true,
+  }) {
+    const workspaceStore = workspaceStoreRef.current;
+
+    if (!workspaceStore || !path || !repoAlias || typeof content !== 'string') {
+      return null;
+    }
+
+    await workspaceStore.saveLocalFileContent({
+      content,
+      filePath: path,
+      repoAlias,
+    });
+    const savedSnapshot = await workspaceStore.saveServerFileSnapshot({
+      advanceBase: true,
+      content,
+      filePath: path,
+      repoAlias,
+      revision,
+    });
+    await workspaceStore.clearPendingOperation(repoAlias, path);
+    await syncOperationCounts(workspaceStore);
+
+    if (typeof headRevision === 'string') {
+      await workspaceStore.saveRepoSnapshot({
+        headRevision,
+        repoAlias,
+        selectedPath: path,
+        status:
+          repoAlias === activeRepoAliasRef.current ? statusRef.current : undefined,
+        tree: repoAlias === activeRepoAliasRef.current ? tree : undefined,
+      });
+    }
+
+    if (setEditorContent) {
+      setContent(savedSnapshot?.content ?? content);
+    }
+
+    return savedSnapshot;
+  }
+
   async function loadFile(
     path,
     repoAlias = activeRepoAliasRef.current,
@@ -1659,9 +1718,9 @@ export default function App() {
     }
 
     try {
-      if (preferLocal) {
-        const cachedFileSnapshot = await workspaceStore?.getFileSnapshot(repoAlias, path);
+      const cachedFileSnapshot = await workspaceStore?.getFileSnapshot(repoAlias, path);
 
+      if (preferLocal) {
         await workspaceStore?.rememberSelectedPath(repoAlias, path);
 
         if (loadFileRequestIdRef.current !== requestId) {
@@ -1685,14 +1744,55 @@ export default function App() {
 
       setConnectivityStatus('online');
       setSelectedPath(path);
-      const savedSnapshot = await workspaceStore?.saveServerFileSnapshot({
-        advanceBase: advanceBaseOnFetch,
-        content: data.content,
-        filePath: path,
-        repoAlias,
-        revision: data.revision,
+      const repoSnapshot = await workspaceStore?.getRepoSnapshot(repoAlias);
+      const nextAction = classifyFetchedFileSync({
+        allowImmediateAdopt: advanceBaseOnFetch,
+        cachedSnapshot: cachedFileSnapshot,
+        nextContent: data.content,
+        nextRevision: data.revision,
       });
-      setContent(savedSnapshot?.content ?? data.content);
+      const matchesCachedServer =
+        cachedFileSnapshot &&
+        cachedFileSnapshot.content === cachedFileSnapshot.serverContent &&
+        cachedFileSnapshot.revision === data.revision &&
+        cachedFileSnapshot.serverContent === data.content;
+
+      if (nextAction === 'adopt_remote') {
+        await adoptFetchedFile({
+          content: data.content,
+          headRevision: repoSnapshot?.headRevision ?? null,
+          path,
+          repoAlias,
+          revision: data.revision,
+        });
+      } else if (nextAction === 'prompt_remote_adopt') {
+        setFastForwardPrompt({
+          currentContent: data.content,
+          currentRevision: data.revision ?? null,
+          headRevision: repoSnapshot?.headRevision ?? null,
+          kind: 'adopt_remote',
+          mergedContent: data.content,
+          path,
+          repoAlias,
+        });
+        setSaveError(`The server has newer changes for ${path}. Press OK to pull them in.`);
+        setStatus((currentStatus) =>
+          currentStatus
+            ? {
+                ...currentStatus,
+                lastSyncMessage: `The server has newer changes for ${path}. Press OK to pull them in.`,
+                lastSyncStatus: 'error',
+              }
+            : currentStatus,
+        );
+      } else {
+        if (matchesCachedServer) {
+          await workspaceStore?.clearPendingOperation(repoAlias, path);
+          await syncOperationCounts(workspaceStore);
+        }
+        setContent(cachedFileSnapshot?.content ?? '');
+      }
+
       await workspaceStore?.rememberSelectedPath(repoAlias, path);
     } catch (error) {
       if (handleUnauthorized(error)) {
@@ -1732,7 +1832,6 @@ export default function App() {
     advanceBaseWhenReloadingFile = false,
     forceReloadFile = false,
     preferLocalWhenReloadingFile = true,
-    refreshFileOnStateChange = true,
     repoAlias = activeRepoAliasRef.current,
   } = {}) {
     if (!repoAlias) {
@@ -1771,7 +1870,6 @@ export default function App() {
           : selectedPathRef.current && hasFilePath(data.tree, selectedPathRef.current)
             ? selectedPathRef.current
             : findFirstFile(data.tree);
-      const stateChanged = data.status.stateVersion !== statusRef.current?.stateVersion;
 
       await workspaceStore?.saveRepoSnapshot({
         headRevision: data.headRevision ?? null,
@@ -1783,9 +1881,7 @@ export default function App() {
 
       if (
         nextSelectedPath &&
-        (forceReloadFile ||
-          nextSelectedPath !== selectedPathRef.current ||
-          (refreshFileOnStateChange && stateChanged))
+        (forceReloadFile || nextSelectedPath !== selectedPathRef.current)
       ) {
         await loadFile(nextSelectedPath, repoAlias, {
           advanceBaseOnFetch: advanceBaseWhenReloadingFile,
@@ -1958,7 +2054,7 @@ export default function App() {
       })
       .catch(() => false)
       .finally(() => {
-        loadState({ forceReloadFile: true, repoAlias: activeRepoAlias }).catch(() => {});
+        loadState({ repoAlias: activeRepoAlias }).catch(() => {});
       });
 
     return undefined;
@@ -1973,10 +2069,7 @@ export default function App() {
       flushPendingWrite().catch(() => {});
 
       if (activeRepoAliasRef.current && connectivityStatusRef.current === 'online') {
-        loadState({
-          refreshFileOnStateChange: false,
-          repoAlias: activeRepoAliasRef.current,
-        }).catch(() => {});
+        loadState({ repoAlias: activeRepoAliasRef.current }).catch(() => {});
       }
     }, 3_000);
 
@@ -2305,7 +2398,7 @@ export default function App() {
     }
 
     setSaveError('');
-    await refreshTreeState({ forceReloadFile: true, repoAlias: activeRepoAliasRef.current });
+    await refreshTreeState({ repoAlias: activeRepoAliasRef.current });
   }
 
   async function handleSaveAlias(event) {
@@ -2553,33 +2646,46 @@ export default function App() {
     setSaveError('');
 
     try {
-      await workspaceStore.clearPendingOperation(prompt.repoAlias, prompt.path);
-      await workspaceStore.saveLocalFileContent({
-        content: prompt.mergedContent,
-        filePath: prompt.path,
-        repoAlias: prompt.repoAlias,
-      });
-      await workspaceStore.saveServerFileSnapshot({
-        advanceBase: true,
-        content: prompt.currentContent,
-        filePath: prompt.path,
-        preserveLocalContent: true,
-        repoAlias: prompt.repoAlias,
-        revision: prompt.currentRevision,
-      });
-      await workspaceStore.saveRepoSnapshot({
-        headRevision: prompt.headRevision,
-        repoAlias: prompt.repoAlias,
-        selectedPath: prompt.path,
-        status: statusRef.current,
-        tree: prompt.repoAlias === activeRepoAliasRef.current ? tree : undefined,
-      });
+      if (prompt.kind === 'adopt_remote') {
+        await adoptFetchedFile({
+          content: prompt.currentContent,
+          headRevision: prompt.headRevision,
+          path: prompt.path,
+          repoAlias: prompt.repoAlias,
+          revision: prompt.currentRevision,
+          setEditorContent:
+            prompt.repoAlias === activeRepoAliasRef.current &&
+            prompt.path === selectedPathRef.current,
+        });
+      } else {
+        await workspaceStore.clearPendingOperation(prompt.repoAlias, prompt.path);
+        await workspaceStore.saveLocalFileContent({
+          content: prompt.mergedContent,
+          filePath: prompt.path,
+          repoAlias: prompt.repoAlias,
+        });
+        await workspaceStore.saveServerFileSnapshot({
+          advanceBase: true,
+          content: prompt.currentContent,
+          filePath: prompt.path,
+          preserveLocalContent: true,
+          repoAlias: prompt.repoAlias,
+          revision: prompt.currentRevision,
+        });
+        await workspaceStore.saveRepoSnapshot({
+          headRevision: prompt.headRevision,
+          repoAlias: prompt.repoAlias,
+          selectedPath: prompt.path,
+          status: statusRef.current,
+          tree: prompt.repoAlias === activeRepoAliasRef.current ? tree : undefined,
+        });
 
-      if (
-        prompt.repoAlias === activeRepoAliasRef.current &&
-        prompt.path === selectedPathRef.current
-      ) {
-        setContent(prompt.mergedContent);
+        if (
+          prompt.repoAlias === activeRepoAliasRef.current &&
+          prompt.path === selectedPathRef.current
+        ) {
+          setContent(prompt.mergedContent);
+        }
       }
 
       conflictDialogActiveRef.current = false;
@@ -2589,16 +2695,23 @@ export default function App() {
         currentStatus
           ? {
               ...currentStatus,
-              lastSyncMessage: `Pulled in newer non-overlapping server changes for ${prompt.path}. Retrying sync.`,
-              lastSyncStatus: 'dirty',
+              lastSyncMessage:
+                prompt.kind === 'adopt_remote'
+                  ? `Pulled in newer server changes for ${prompt.path}.`
+                  : `Pulled in newer non-overlapping server changes for ${prompt.path}. Retrying sync.`,
+              lastSyncStatus: prompt.kind === 'adopt_remote' ? 'ready' : 'dirty',
             }
           : currentStatus,
       );
 
-      const nextOperation = await preparePendingOperation(prompt.repoAlias, prompt.path);
+      if (prompt.kind === 'replay_local') {
+        const nextOperation = await preparePendingOperation(prompt.repoAlias, prompt.path);
 
-      if (nextOperation) {
-        await flushPendingWrite();
+        if (nextOperation) {
+          await flushPendingWrite();
+        } else {
+          await syncOperationCounts(workspaceStore);
+        }
       } else {
         await syncOperationCounts(workspaceStore);
       }
@@ -2952,11 +3065,24 @@ export default function App() {
             <section className="conflict-prompt" ref={promptRef} role="alert">
               <div>
                 <p className="eyebrow">Server Changes Available</p>
-                <h2>Pull in newer non-overlapping server changes</h2>
+                <h2>
+                  {fastForwardPrompt.kind === 'adopt_remote'
+                    ? 'Pull in newer server changes'
+                    : 'Pull in newer non-overlapping server changes'}
+                </h2>
                 <p>
-                  Press <strong>OK</strong> to pull in the newer non-overlapping server changes for{' '}
-                  <code>{fastForwardPrompt.path}</code>, keep your local edits, and continue syncing
-                  automatically.
+                  {fastForwardPrompt.kind === 'adopt_remote' ? (
+                    <>
+                      Press <strong>OK</strong> to replace the currently shown cached version of{' '}
+                      <code>{fastForwardPrompt.path}</code> with the newer server version.
+                    </>
+                  ) : (
+                    <>
+                      Press <strong>OK</strong> to pull in the newer non-overlapping server changes for{' '}
+                      <code>{fastForwardPrompt.path}</code>, keep your local edits, and continue syncing
+                      automatically.
+                    </>
+                  )}
                 </p>
                 {saveError ? <p className="conflict-prompt-feedback">{saveError}</p> : null}
               </div>
