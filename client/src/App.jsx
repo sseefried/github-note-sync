@@ -841,7 +841,15 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeRepoAlias, blockedConflictCount, pendingOperationCount, selectedPath, workspaceReady]);
+  }, [
+    activeRepoAlias,
+    blockedConflictCount,
+    pendingOperationCount,
+    selectedPath,
+    status?.lastSyncAt,
+    status?.stateVersion,
+    workspaceReady,
+  ]);
 
   useEffect(() => {
     function handlePopState() {
