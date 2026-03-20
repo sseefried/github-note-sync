@@ -3126,57 +3126,6 @@ export default function App() {
             )}
           </section>
 
-          {syncPromptConfig ? (
-            <div className="sync-dialog-backdrop" role="presentation">
-              <section
-                className="conflict-prompt sync-dialog"
-                ref={promptRef}
-                role="alertdialog"
-                aria-modal="true"
-              >
-                <div>
-                  <p className="eyebrow">{syncPromptConfig.eyebrow}</p>
-                  <h2>{syncPromptConfig.headline}</h2>
-                  <p>
-                    {syncPromptConfig.promptKind === 'reload_from_server' ? (
-                      <>
-                        The original base commit for <code>{syncPromptConfig.path}</code> is no longer
-                        available. Press <strong>OK</strong> to discard the blocked local conflict flow
-                        and reload the latest server version of this file.
-                      </>
-                    ) : syncPromptConfig.promptKind === 'adopt_remote' ? (
-                      <>
-                        Press <strong>OK</strong> to replace the currently shown cached version of{' '}
-                        <code>{syncPromptConfig.path}</code> with the newer server version.
-                      </>
-                    ) : syncPromptConfig.promptKind === 'replay_local' ? (
-                      <>
-                        Press <strong>OK</strong> to pull in the newer non-overlapping server changes for{' '}
-                        <code>{syncPromptConfig.path}</code>, keep your local edits, and continue syncing
-                        automatically.
-                      </>
-                    ) : (
-                      <>
-                        Press <strong>OK</strong> to create a normal committed version of{' '}
-                        <code>{syncPromptConfig.path}</code> that keeps both sides and inserts Git
-                        conflict markers where they overlap.
-                      </>
-                    )}
-                  </p>
-                  {saveError ? <p className="conflict-prompt-feedback">{saveError}</p> : null}
-                </div>
-                <button
-                  className="solid-button"
-                  disabled={syncPromptConfig.disabled}
-                  onClick={syncPromptConfig.onConfirm}
-                  type="button"
-                >
-                  {syncPromptConfig.actionLabel}
-                </button>
-              </section>
-            </div>
-          ) : null}
-
           <footer className="footer-row">
             <span>
               {loadingFile
@@ -3436,6 +3385,56 @@ export default function App() {
         </aside>
         ) : null}
       </section>
+      {syncPromptConfig ? (
+        <div className="sync-dialog-backdrop" role="presentation">
+          <section
+            className="conflict-prompt sync-dialog"
+            ref={promptRef}
+            role="alertdialog"
+            aria-modal="true"
+          >
+            <div>
+              <p className="eyebrow">{syncPromptConfig.eyebrow}</p>
+              <h2>{syncPromptConfig.headline}</h2>
+              <p>
+                {syncPromptConfig.promptKind === 'reload_from_server' ? (
+                  <>
+                    The original base commit for <code>{syncPromptConfig.path}</code> is no longer
+                    available. Press <strong>OK</strong> to discard the blocked local conflict flow
+                    and reload the latest server version of this file.
+                  </>
+                ) : syncPromptConfig.promptKind === 'adopt_remote' ? (
+                  <>
+                    Press <strong>OK</strong> to replace the currently shown cached version of{' '}
+                    <code>{syncPromptConfig.path}</code> with the newer server version.
+                  </>
+                ) : syncPromptConfig.promptKind === 'replay_local' ? (
+                  <>
+                    Press <strong>OK</strong> to pull in the newer non-overlapping server changes for{' '}
+                    <code>{syncPromptConfig.path}</code>, keep your local edits, and continue syncing
+                    automatically.
+                  </>
+                ) : (
+                  <>
+                    Press <strong>OK</strong> to create a normal committed version of{' '}
+                    <code>{syncPromptConfig.path}</code> that keeps both sides and inserts Git
+                    conflict markers where they overlap.
+                  </>
+                )}
+              </p>
+              {saveError ? <p className="conflict-prompt-feedback">{saveError}</p> : null}
+            </div>
+            <button
+              className="solid-button"
+              disabled={syncPromptConfig.disabled}
+              onClick={syncPromptConfig.onConfirm}
+              type="button"
+            >
+              {syncPromptConfig.actionLabel}
+            </button>
+          </section>
+        </div>
+      ) : null}
     </main>
   );
 }
