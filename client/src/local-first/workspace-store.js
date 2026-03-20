@@ -470,6 +470,7 @@ export function createWorkspaceStoreWithAdapter(adapter) {
     revision,
   }) {
     const currentOperation = await getPendingOperation(repoAlias, filePath);
+    const currentSnapshot = await getFileSnapshot(repoAlias, filePath);
 
     if (!currentOperation || currentOperation.opId !== opId) {
       await saveServerFileSnapshot({
@@ -483,12 +484,17 @@ export function createWorkspaceStoreWithAdapter(adapter) {
       return false;
     }
 
+    const preserveLocalContent =
+      typeof currentSnapshot?.content === 'string' &&
+      currentSnapshot.content !== currentOperation.targetContent;
+
     await Promise.all([
       clearPendingOperation(repoAlias, filePath),
       saveServerFileSnapshot({
         advanceBase: true,
         content,
         filePath: currentOperation.path,
+        preserveLocalContent,
         repoAlias: currentOperation.repoAlias,
         revision,
       }),

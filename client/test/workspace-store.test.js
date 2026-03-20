@@ -99,6 +99,57 @@ test('acknowledgeOperation ignores stale op ids and keeps newer local edits queu
   assert.equal(fileSnapshot.revision, 'sha256:two');
 });
 
+test('acknowledgeOperation preserves newer local content even before a replacement op exists', async () => {
+  const store = createStore();
+
+  await store.saveServerFileSnapshot({
+    content: 'draft zero',
+    filePath: 'notes/today.md',
+    repoAlias: 'personal',
+    revision: 'sha256:zero',
+    updatedAt: '2026-03-20T10:00:00.000Z',
+  });
+
+  const sentOperation = await store.upsertPendingOperation({
+    baseCommit: 'commit-zero',
+    baseRevision: 'sha256:zero',
+    filePath: 'notes/today.md',
+    kind: 'patch',
+    payload: {
+      ops: [{ from: 6, text: 'one', to: 10, type: 'replace' }],
+    },
+    repoAlias: 'personal',
+    status: 'sent',
+    targetContent: 'draft one',
+    updatedAt: '2026-03-20T10:00:01.000Z',
+  });
+
+  await store.saveLocalFileContent({
+    content: 'draft two',
+    filePath: 'notes/today.md',
+    repoAlias: 'personal',
+    updatedAt: '2026-03-20T10:00:02.000Z',
+  });
+
+  assert.equal(
+    await store.acknowledgeOperation({
+      content: 'draft one',
+      filePath: 'notes/today.md',
+      opId: sentOperation.opId,
+      repoAlias: 'personal',
+      revision: 'sha256:one',
+    }),
+    true,
+  );
+
+  assert.equal(await store.countPendingOperations(), 0);
+
+  const fileSnapshot = await store.getFileSnapshot('personal', 'notes/today.md');
+  assert.equal(fileSnapshot.content, 'draft two');
+  assert.equal(fileSnapshot.serverContent, 'draft one');
+  assert.equal(fileSnapshot.revision, 'sha256:one');
+});
+
 test('saveServerFileSnapshot preserves the existing server base while local edits are dirty', async () => {
   const store = createStore();
 

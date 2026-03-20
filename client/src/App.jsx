@@ -671,12 +671,13 @@ export default function App() {
     setEditingRepoDraft('');
     setBlockedConflictCount(0);
     setCommittingConflictMarkers(false);
+    setFastForwardPrompt(null);
     setMobilePage(initialRoute.filePath ? 'editor' : 'files');
     setPendingOperationCount(0);
+    setReloadFromServerPrompt(null);
     setSelectedConflictOperation(null);
     setSyncingOperations(false);
     setShowMarkdownPreview(false);
-
     if (flushTimerRef.current) {
       window.clearTimeout(flushTimerRef.current);
       flushTimerRef.current = null;
@@ -804,9 +805,7 @@ export default function App() {
     let cancelled = false;
 
     if (!workspaceReady || !activeRepoAlias || !selectedPath) {
-      setFastForwardPrompt(null);
-      setSelectedConflictOperation(null);
-      setReloadFromServerPrompt(null);
+      clearSyncPromptState();
       return () => {
         cancelled = true;
       };
@@ -819,13 +818,15 @@ export default function App() {
           return;
         }
 
-        setSelectedConflictOperation(
-          operation?.status === 'blocked_conflict' ? operation : null,
-        );
+        setSyncPromptState({
+          selectedConflict: operation?.status === 'blocked_conflict' ? operation : null,
+        });
       })
       .catch(() => {
         if (!cancelled) {
-          setSelectedConflictOperation(null);
+          setSyncPromptState({
+            selectedConflict: null,
+          });
         }
       });
 
@@ -1009,17 +1010,40 @@ export default function App() {
     const workspaceStore = workspaceStoreRef.current;
 
     if (!workspaceStore || !repoAlias || !filePath) {
-      setSelectedConflictOperation(null);
+      setSyncPromptState({
+        selectedConflict: null,
+      });
       return null;
     }
 
     const operation = await workspaceStore.getPendingOperation(repoAlias, filePath);
     const nextOperation = operation?.status === 'blocked_conflict' ? operation : null;
-    setSelectedConflictOperation(nextOperation);
+    setSyncPromptState({
+      selectedConflict: nextOperation,
+    });
     return nextOperation;
   }
 
-  async function preparePendingOperation(repoAlias, filePath) {
+  function setSyncPromptState({
+    fastForward = fastForwardPrompt,
+    reloadPrompt = reloadFromServerPrompt,
+    selectedConflict = selectedConflictOperation,
+  }) {
+    conflictDialogActiveRef.current = Boolean(fastForward || reloadPrompt || selectedConflict);
+    setFastForwardPrompt(fastForward);
+    setReloadFromServerPrompt(reloadPrompt);
+    setSelectedConflictOperation(selectedConflict);
+  }
+
+  function clearSyncPromptState() {
+    setSyncPromptState({
+      fastForward: null,
+      reloadPrompt: null,
+      selectedConflict: null,
+    });
+  }
+
+  async function preparePendingOperation(repoAlias, filePath, attempt = 0) {
     const workspaceStore = workspaceStoreRef.current;
 
     if (!workspaceStore || !repoAlias || !filePath) {
@@ -1088,8 +1112,35 @@ export default function App() {
       return null;
     }
 
+    const [latestRepoSnapshot, latestFileSnapshot, latestOperation] = await Promise.all([
+      workspaceStore.getRepoSnapshot(repoAlias),
+      workspaceStore.getFileSnapshot(repoAlias, filePath),
+      workspaceStore.getPendingOperation(repoAlias, filePath),
+    ]);
+
+    const fileSnapshotChanged =
+      !latestFileSnapshot ||
+      latestFileSnapshot.content !== fileSnapshot.content ||
+      latestFileSnapshot.serverContent !== fileSnapshot.serverContent ||
+      latestFileSnapshot.revision !== fileSnapshot.revision;
+    const operationChanged =
+      (latestOperation?.opId ?? null) !== (currentOperation?.opId ?? null) ||
+      (latestOperation?.status ?? null) !== (currentOperation?.status ?? null) ||
+      (latestOperation?.targetContent ?? '') !== (currentOperation?.targetContent ?? '');
+    const repoHeadChanged =
+      (latestRepoSnapshot?.headRevision ?? null) !== (repoSnapshot?.headRevision ?? null);
+
+    if (fileSnapshotChanged || operationChanged || repoHeadChanged) {
+      if (attempt >= 8) {
+        await syncOperationCounts(workspaceStore);
+        return null;
+      }
+
+      return preparePendingOperation(repoAlias, filePath, attempt + 1);
+    }
+
     nextOperation = await workspaceStore.upsertPendingOperation({
-      baseCommit: repoSnapshot?.headRevision ?? null,
+      baseCommit: latestRepoSnapshot?.headRevision ?? null,
       baseRevision: fileSnapshot.revision,
       filePath,
       kind: 'patch',
@@ -1278,20 +1329,22 @@ export default function App() {
             : null;
 
         if (fastForwardResult) {
-          setFastForwardPrompt({
-            baseCommit:
-              typeof activeOperation.baseCommit === 'string' ? activeOperation.baseCommit : null,
-            baseRevision: activeOperation.baseRevision,
-            currentContent,
-            currentRevision,
-            headRevision,
-            kind: 'replay_local',
-            mergedContent: fastForwardResult.mergedContent,
-            path: activeOperation.path,
-            repoAlias: activeOperation.repoAlias,
+          setSyncPromptState({
+            fastForward: {
+              baseCommit:
+                typeof activeOperation.baseCommit === 'string' ? activeOperation.baseCommit : null,
+              baseRevision: activeOperation.baseRevision,
+              currentContent,
+              currentRevision,
+              headRevision,
+              kind: 'replay_local',
+              mergedContent: fastForwardResult.mergedContent,
+              path: activeOperation.path,
+              repoAlias: activeOperation.repoAlias,
+            },
+            reloadPrompt: null,
+            selectedConflict: null,
           });
-          setReloadFromServerPrompt(null);
-          setSelectedConflictOperation(null);
           setSaveError(
             `The server has newer non-overlapping changes for ${activeOperation.path}. Press OK to pull them in and continue syncing.`,
           );
