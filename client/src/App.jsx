@@ -2288,7 +2288,13 @@ export default function App() {
     }
 
     const baseCommit = operation.conflict?.baseCommit ?? operation.baseCommit ?? null;
-    const forceFullConflict = typeof baseCommit !== 'string';
+
+    if (typeof baseCommit !== 'string' || baseCommit.trim() === '') {
+      setSaveError(
+        `The client does not have a base commit for ${operation.path}. Refresh the repo and retry the conflict.`,
+      );
+      return;
+    }
 
     setCommittingConflictMarkers(true);
     setSaveError('');
@@ -2296,8 +2302,7 @@ export default function App() {
     try {
       const data = await fetchJson('/api/conflicts/commit-markers', {
         body: JSON.stringify({
-          baseCommit: typeof baseCommit === 'string' ? baseCommit : '',
-          forceFullConflict,
+          baseCommit,
           localContent: operation.targetContent,
           path: operation.path,
           repoAlias: operation.repoAlias,

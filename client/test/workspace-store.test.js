@@ -156,7 +156,7 @@ test('blocked conflicts are excluded from pending counts', async () => {
     targetContent: 'beta',
   });
   await store.blockOperationConflict('personal', 'notes/today.md', {
-    baseContent: 'alpha',
+    baseCommit: 'commit-alpha',
     currentRevision: 'sha256:server',
     path: 'notes/today.md',
   });
@@ -166,8 +166,8 @@ test('blocked conflicts are excluded from pending counts', async () => {
   assert.equal(
     (
       await store.getPendingOperation('personal', 'notes/today.md')
-    ).conflict.baseContent,
-    'alpha',
+    ).conflict.baseCommit,
+    'commit-alpha',
   );
 });
 
