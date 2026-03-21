@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import CodeMirror from '@uiw/react-codemirror';
 import { markdown } from '@codemirror/lang-markdown';
 import { EditorView } from '@codemirror/view';
@@ -25,6 +25,13 @@ import {
 } from './local-first/patch-ops.js';
 import { classifyFetchedFileSync } from './local-first/file-sync.js';
 import { deriveSyncState } from './local-first/sync-state.js';
+import {
+  appMachineReducer,
+  buildResolutionState,
+  createInitialAppMachineState,
+  deriveFilePhase,
+  deriveWorkspacePhase,
+} from './state-machine/app-machine.js';
 
 const SERVER_URL = (import.meta.env.VITE_SERVER_URL ?? '').trim().replace(/\/$/, '');
 const CLIENT_WRITE_DEBOUNCE_MS = 3_000;
@@ -200,6 +207,10 @@ function getViewportHeightPx() {
   const normalizedHeight = Math.round(viewportHeight);
 
   return Number.isFinite(normalizedHeight) && normalizedHeight > 0 ? normalizedHeight : null;
+}
+
+function resolveStateValue(nextValue, currentValue) {
+  return typeof nextValue === 'function' ? nextValue(currentValue) : nextValue;
 }
 
 function FilePlusIcon() {
@@ -528,15 +539,7 @@ export default function App() {
   const [mobilePage, setMobilePage] = useState(() => (initialRoute.filePath ? 'editor' : 'files'));
   const [routeRepoAlias, setRouteRepoAlias] = useState(initialRoute.repoAlias);
   const [routeFilePath, setRouteFilePath] = useState(initialRoute.filePath);
-  const [tree, setTree] = useState(null);
-  const [status, setStatus] = useState(null);
-  const [selectedPath, setSelectedPath] = useState(null);
-  const [content, setContent] = useState('');
-  const [loadingFile, setLoadingFile] = useState(false);
-  const [loadingTree, setLoadingTree] = useState(false);
   const [appError, setAppError] = useState('');
-  const [repoError, setRepoError] = useState('');
-  const [saveError, setSaveError] = useState('');
   const [repoAliases, setRepoAliases] = useState([]);
   const [activeRepoAlias, setActiveRepoAlias] = useState('');
   const [repoAliasDraft, setRepoAliasDraft] = useState('');
@@ -548,31 +551,19 @@ export default function App() {
   const [savingAlias, setSavingAlias] = useState(false);
   const [deletingAlias, setDeletingAlias] = useState(false);
   const [registeringRepo, setRegisteringRepo] = useState(false);
-  const [authReady, setAuthReady] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState('');
   const [authMode, setAuthMode] = useState('login');
-  const [authUser, setAuthUser] = useState(null);
-  const [registrationOpen, setRegistrationOpen] = useState(false);
-  const [hasUsers, setHasUsers] = useState(true);
   const [usernameDraft, setUsernameDraft] = useState('');
   const [passwordDraft, setPasswordDraft] = useState('');
   const [confirmPasswordDraft, setConfirmPasswordDraft] = useState('');
   const [showMarkdownPreview, setShowMarkdownPreview] = useState(false);
   const [workspaceReady, setWorkspaceReady] = useState(false);
-  const [connectivityStatus, setConnectivityStatus] = useState(() =>
+  const [machineState, dispatch] = useReducer(
+    appMachineReducer,
     getConnectivityStatusFromNavigator(),
+    createInitialAppMachineState,
   );
-  const [blockedConflictCount, setBlockedConflictCount] = useState(0);
-  const [applyingFastForward, setApplyingFastForward] = useState(false);
-  const [committingConflictMarkers, setCommittingConflictMarkers] = useState(false);
-  const [fastForwardPrompt, setFastForwardPrompt] = useState(null);
-  const [pendingOperationCount, setPendingOperationCount] = useState(0);
-  const [selectedConflictOperation, setSelectedConflictOperation] = useState(null);
-  const [reloadFromServerPrompt, setReloadFromServerPrompt] = useState(null);
-  const [reloadingConflictFromServer, setReloadingConflictFromServer] = useState(false);
-  const [syncingOperations, setSyncingOperations] = useState(false);
-  const [debugBaseCommit, setDebugBaseCommit] = useState(null);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     if (typeof window === 'undefined') {
       return DEFAULT_SIDEBAR_WIDTH;
@@ -608,6 +599,298 @@ export default function App() {
   const syncingOperationsRef = useRef(false);
   const workspaceStoreRef = useRef(null);
   const resizeCleanupRef = useRef(null);
+
+  const sessionState = machineState.session;
+  const workspaceState = machineState.workspace;
+  const fileState = machineState.file;
+  const replicaState = machineState.replica;
+  const resolutionState = machineState.resolution;
+  const syncStateMachine = machineState.sync;
+
+  const authReady = sessionState.phase !== 'booting';
+  const authUser = sessionState.user;
+  const hasUsers = sessionState.hasUsers;
+  const registrationOpen = sessionState.registrationOpen;
+  const connectivityStatus = machineState.connectivity;
+  const tree = workspaceState.tree;
+  const status = workspaceState.status;
+  const loadingTree = workspaceState.phase === 'hydrating';
+  const repoError = workspaceState.error;
+  const selectedPath = fileState.path;
+  const content = fileState.content;
+  const loadingFile = fileState.phase === 'loading';
+  const saveError = fileState.saveError;
+  const debugBaseCommit = fileState.debugBaseCommit;
+  const blockedConflictCount = replicaState.blockedConflictCount;
+  const pendingOperationCount = replicaState.pendingOperationCount;
+  const syncingOperations = syncStateMachine.phase === 'syncing';
+  const fastForwardPrompt =
+    resolutionState.kind === 'adopt_remote' || resolutionState.kind === 'fast_forward_and_replay'
+      ? resolutionState.prompt
+      : null;
+  const selectedConflictOperation =
+    resolutionState.kind === 'merge_with_remote' ? resolutionState.prompt : null;
+  const reloadFromServerPrompt =
+    resolutionState.kind === 'reload_from_server' ? resolutionState.prompt : null;
+  const applyingFastForward =
+    resolutionState.busy &&
+    (resolutionState.kind === 'adopt_remote' || resolutionState.kind === 'fast_forward_and_replay');
+  const committingConflictMarkers =
+    resolutionState.busy && resolutionState.kind === 'merge_with_remote';
+  const reloadingConflictFromServer =
+    resolutionState.busy && resolutionState.kind === 'reload_from_server';
+
+  function setAuthReady(nextValue) {
+    const nextReady = resolveStateValue(nextValue, authReady);
+
+    dispatch({
+      type: 'SESSION_PATCH',
+      patch: {
+        phase: nextReady ? (authUser ? 'authenticated' : 'anonymous') : 'booting',
+      },
+    });
+  }
+
+  function setAuthUser(nextValue) {
+    const nextUser = resolveStateValue(nextValue, authUser);
+
+    dispatch({
+      type: 'SESSION_PATCH',
+      patch: {
+        phase: authReady ? (nextUser ? 'authenticated' : 'anonymous') : 'booting',
+        user: nextUser,
+      },
+    });
+  }
+
+  function setHasUsers(nextValue) {
+    dispatch({
+      type: 'SESSION_PATCH',
+      patch: {
+        hasUsers: resolveStateValue(nextValue, hasUsers),
+      },
+    });
+  }
+
+  function setRegistrationOpen(nextValue) {
+    dispatch({
+      type: 'SESSION_PATCH',
+      patch: {
+        registrationOpen: resolveStateValue(nextValue, registrationOpen),
+      },
+    });
+  }
+
+  function setConnectivityStatus(nextValue) {
+    dispatch({
+      type: 'CONNECTIVITY_SET',
+      connectivity: resolveStateValue(nextValue, connectivityStatus),
+    });
+  }
+
+  function setTree(nextValue) {
+    const nextTree = resolveStateValue(nextValue, tree);
+
+    dispatch({
+      type: 'WORKSPACE_PATCH',
+      patch: {
+        phase: deriveWorkspacePhase({
+          error: repoError,
+          hasActiveRepoAlias: Boolean(activeRepoAliasRef.current || activeRepoAlias),
+          loading: loadingTree,
+        }),
+        tree: nextTree,
+      },
+    });
+  }
+
+  function setStatus(nextValue) {
+    dispatch({
+      type: 'WORKSPACE_PATCH',
+      patch: {
+        status: resolveStateValue(nextValue, status),
+      },
+    });
+  }
+
+  function setLoadingTree(nextValue) {
+    const nextLoading = resolveStateValue(nextValue, loadingTree);
+
+    dispatch({
+      type: 'WORKSPACE_SET_PHASE',
+      phase: deriveWorkspacePhase({
+        error: repoError,
+        hasActiveRepoAlias: Boolean(activeRepoAliasRef.current || activeRepoAlias),
+        loading: nextLoading,
+      }),
+    });
+  }
+
+  function setRepoError(nextValue) {
+    const nextError = resolveStateValue(nextValue, repoError);
+
+    dispatch({
+      type: 'WORKSPACE_PATCH',
+      patch: {
+        error: nextError,
+        phase: deriveWorkspacePhase({
+          error: nextError,
+          hasActiveRepoAlias: Boolean(activeRepoAliasRef.current || activeRepoAlias),
+          loading: loadingTree,
+        }),
+      },
+    });
+  }
+
+  function setSelectedPath(nextValue) {
+    const nextPath = resolveStateValue(nextValue, selectedPath);
+
+    dispatch({
+      type: 'FILE_PATCH',
+      patch: {
+        path: nextPath,
+        phase: deriveFilePhase({
+          loading: loadingFile,
+          path: nextPath,
+        }),
+      },
+    });
+  }
+
+  function setContent(nextValue) {
+    dispatch({
+      type: 'FILE_PATCH',
+      patch: {
+        content: resolveStateValue(nextValue, content),
+      },
+    });
+  }
+
+  function setLoadingFile(nextValue) {
+    const nextLoading = resolveStateValue(nextValue, loadingFile);
+
+    dispatch({
+      type: 'FILE_SET_PHASE',
+      phase: deriveFilePhase({
+        loading: nextLoading,
+        path: selectedPath,
+      }),
+    });
+  }
+
+  function setSaveError(nextValue) {
+    dispatch({
+      type: 'FILE_PATCH',
+      patch: {
+        saveError: resolveStateValue(nextValue, saveError),
+      },
+    });
+  }
+
+  function setDebugBaseCommit(nextValue) {
+    dispatch({
+      type: 'FILE_PATCH',
+      patch: {
+        debugBaseCommit: resolveStateValue(nextValue, debugBaseCommit),
+      },
+    });
+  }
+
+  function setBlockedConflictCount(nextValue) {
+    dispatch({
+      type: 'REPLICA_PATCH',
+      patch: {
+        blockedConflictCount: resolveStateValue(nextValue, blockedConflictCount),
+      },
+    });
+  }
+
+  function setPendingOperationCount(nextValue) {
+    dispatch({
+      type: 'REPLICA_PATCH',
+      patch: {
+        pendingOperationCount: resolveStateValue(nextValue, pendingOperationCount),
+      },
+    });
+  }
+
+  function setSyncingOperations(nextValue) {
+    const nextSyncing = resolveStateValue(nextValue, syncingOperations);
+
+    dispatch({
+      type: 'SYNC_SET_PHASE',
+      phase: nextSyncing ? 'syncing' : 'idle',
+    });
+  }
+
+  function setApplyingFastForward(nextValue) {
+    dispatch({
+      type: 'RESOLUTION_SET_BUSY',
+      busy: resolveStateValue(nextValue, applyingFastForward),
+    });
+  }
+
+  function setCommittingConflictMarkers(nextValue) {
+    dispatch({
+      type: 'RESOLUTION_SET_BUSY',
+      busy: resolveStateValue(nextValue, committingConflictMarkers),
+    });
+  }
+
+  function setReloadingConflictFromServer(nextValue) {
+    dispatch({
+      type: 'RESOLUTION_SET_BUSY',
+      busy: resolveStateValue(nextValue, reloadingConflictFromServer),
+    });
+  }
+
+  function setFastForwardPrompt(nextValue) {
+    const nextPrompt = resolveStateValue(nextValue, fastForwardPrompt);
+
+    dispatch({
+      type: 'RESOLUTION_SET',
+      resolution: buildResolutionState(
+        {
+          fastForward: nextPrompt,
+          reloadPrompt: reloadFromServerPrompt,
+          selectedConflict: selectedConflictOperation,
+        },
+        resolutionState,
+      ),
+    });
+  }
+
+  function setSelectedConflictOperation(nextValue) {
+    const nextPrompt = resolveStateValue(nextValue, selectedConflictOperation);
+
+    dispatch({
+      type: 'RESOLUTION_SET',
+      resolution: buildResolutionState(
+        {
+          fastForward: fastForwardPrompt,
+          reloadPrompt: reloadFromServerPrompt,
+          selectedConflict: nextPrompt,
+        },
+        resolutionState,
+      ),
+    });
+  }
+
+  function setReloadFromServerPrompt(nextValue) {
+    const nextPrompt = resolveStateValue(nextValue, reloadFromServerPrompt);
+
+    dispatch({
+      type: 'RESOLUTION_SET',
+      resolution: buildResolutionState(
+        {
+          fastForward: fastForwardPrompt,
+          reloadPrompt: nextPrompt,
+          selectedConflict: selectedConflictOperation,
+        },
+        resolutionState,
+      ),
+    });
+  }
 
   const missingServerUrl = SERVER_URL === '';
   const isAuthenticated = authUser !== null;
@@ -656,14 +939,9 @@ export default function App() {
   }
 
   function resetWorkspaceState() {
-    setTree(null);
-    setStatus(null);
-    setSelectedPath(null);
-    setContent('');
-    setLoadingFile(false);
-    setLoadingTree(false);
-    setRepoError('');
-    setSaveError('');
+    dispatch({
+      type: 'RESET_WORKSPACE_MACHINE',
+    });
     setRepoAliases([]);
     setActiveRepoAlias('');
     setRepoAliasDraft('');
@@ -672,14 +950,8 @@ export default function App() {
     setCopyStatus('');
     setEditingAlias('');
     setEditingRepoDraft('');
-    setBlockedConflictCount(0);
-    setCommittingConflictMarkers(false);
-    setFastForwardPrompt(null);
+    clearSyncPromptState();
     setMobilePage(initialRoute.filePath ? 'editor' : 'files');
-    setPendingOperationCount(0);
-    setReloadFromServerPrompt(null);
-    setSelectedConflictOperation(null);
-    setSyncingOperations(false);
     setShowMarkdownPreview(false);
     if (flushTimerRef.current) {
       window.clearTimeout(flushTimerRef.current);
@@ -1039,9 +1311,17 @@ export default function App() {
     reloadFromServerPromptRef.current = reloadPrompt;
     selectedConflictOperationRef.current = selectedConflict;
     conflictDialogActiveRef.current = Boolean(fastForward || reloadPrompt || selectedConflict);
-    setFastForwardPrompt(fastForward);
-    setReloadFromServerPrompt(reloadPrompt);
-    setSelectedConflictOperation(selectedConflict);
+    dispatch({
+      type: 'RESOLUTION_SET',
+      resolution: buildResolutionState(
+        {
+          fastForward,
+          reloadPrompt,
+          selectedConflict,
+        },
+        resolutionState,
+      ),
+    });
   }
 
   function clearSyncPromptState() {
@@ -1346,7 +1626,7 @@ export default function App() {
               currentContent,
               currentRevision,
               headRevision,
-              kind: 'replay_local',
+              kind: 'fast_forward_and_replay',
               mergedContent: fastForwardResult.mergedContent,
               path: activeOperation.path,
               repoAlias: activeOperation.repoAlias,
@@ -1768,9 +2048,7 @@ export default function App() {
     setSaveError('');
 
     if (switchingFiles) {
-      setFastForwardPrompt(null);
-      setSelectedConflictOperation(null);
-      setReloadFromServerPrompt(null);
+      clearSyncPromptState();
     }
 
     setSelectedPath(path);
@@ -1828,14 +2106,18 @@ export default function App() {
           revision: data.revision,
         });
       } else if (nextAction === 'prompt_remote_adopt') {
-        setFastForwardPrompt({
-          currentContent: data.content,
-          currentRevision: data.revision ?? null,
-          headRevision: repoSnapshot?.headRevision ?? null,
-          kind: 'adopt_remote',
-          mergedContent: data.content,
-          path,
-          repoAlias,
+        setSyncPromptState({
+          fastForward: {
+            currentContent: data.content,
+            currentRevision: data.revision ?? null,
+            headRevision: repoSnapshot?.headRevision ?? null,
+            kind: 'adopt_remote',
+            mergedContent: data.content,
+            path,
+            repoAlias,
+          },
+          reloadPrompt: null,
+          selectedConflict: null,
         });
         setSaveError(`The server has newer changes for ${path}. Press OK to pull them in.`);
         setStatus((currentStatus) =>
@@ -2618,10 +2900,13 @@ export default function App() {
 
     if (typeof baseCommit !== 'string' || baseCommit.trim() === '') {
       setSaveError('');
-      setSelectedConflictOperation(null);
-      setReloadFromServerPrompt({
-        path: operation.path,
-        repoAlias: operation.repoAlias,
+      setSyncPromptState({
+        fastForward: null,
+        reloadPrompt: {
+          path: operation.path,
+          repoAlias: operation.repoAlias,
+        },
+        selectedConflict: null,
       });
       return;
     }
@@ -2630,7 +2915,7 @@ export default function App() {
     setSaveError('');
 
     try {
-      const data = await fetchJson('/api/conflicts/commit-markers', {
+      const data = await fetchJson('/api/conflicts/merge', {
         body: JSON.stringify({
           baseCommit,
           localContent: operation.targetContent,
@@ -2672,7 +2957,9 @@ export default function App() {
         setContent(data.file.content);
       }
 
-      setSelectedConflictOperation(null);
+      setSyncPromptState({
+        selectedConflict: null,
+      });
     } catch (error) {
       if (handleUnauthorized(error)) {
         return;
@@ -2683,10 +2970,13 @@ export default function App() {
         setSaveError('The server is unreachable right now. Reconnect and press OK again.');
       } else if (isUnavailableBaseCommitError(error)) {
         setSaveError('');
-        setSelectedConflictOperation(null);
-        setReloadFromServerPrompt({
-          path: operation.path,
-          repoAlias: operation.repoAlias,
+        setSyncPromptState({
+          fastForward: null,
+          reloadPrompt: {
+            path: operation.path,
+            repoAlias: operation.repoAlias,
+          },
+          selectedConflict: null,
         });
       } else {
         setSaveError(error.message);
@@ -2750,8 +3040,7 @@ export default function App() {
         }
       }
 
-      conflictDialogActiveRef.current = false;
-      setFastForwardPrompt(null);
+      clearSyncPromptState();
       setConnectivityStatus('online');
       setStatus((currentStatus) =>
         currentStatus
@@ -2766,7 +3055,7 @@ export default function App() {
           : currentStatus,
       );
 
-      if (prompt.kind === 'replay_local') {
+      if (prompt.kind === 'fast_forward_and_replay') {
         const nextOperation = await preparePendingOperation(prompt.repoAlias, prompt.path);
 
         if (nextOperation) {
@@ -2789,7 +3078,9 @@ export default function App() {
         setSaveError(error.message);
       }
 
-      setFastForwardPrompt(prompt);
+      setSyncPromptState({
+        fastForward: prompt,
+      });
     } finally {
       setApplyingFastForward(false);
     }
@@ -2809,8 +3100,11 @@ export default function App() {
     try {
       await workspaceStore.clearPendingOperation(operation.repoAlias, operation.path);
       await syncOperationCounts(workspaceStore);
-      setSelectedConflictOperation(null);
-      setReloadFromServerPrompt(null);
+      setSyncPromptState({
+        fastForward: null,
+        reloadPrompt: null,
+        selectedConflict: null,
+      });
       await loadState({
         advanceBaseWhenReloadingFile: true,
         forceReloadFile: true,
@@ -2829,7 +3123,9 @@ export default function App() {
         setSaveError(error.message);
       }
 
-      setReloadFromServerPrompt(operation);
+      setSyncPromptState({
+        reloadPrompt: operation,
+      });
     } finally {
       setReloadingConflictFromServer(false);
     }
@@ -2999,7 +3295,7 @@ export default function App() {
             headline: 'Create a merged version with conflict markers',
             onConfirm: handleCommitConflictMarkers,
             path: selectedConflictOperation.path,
-            promptKind: 'conflict_markers',
+            promptKind: 'merge_with_remote',
           }
         : null;
   const shortDebugBaseCommit =
@@ -3470,7 +3766,7 @@ export default function App() {
                     Press <strong>OK</strong> to replace the currently shown cached version of{' '}
                     <code>{syncPromptConfig.path}</code> with the newer server version.
                   </>
-                ) : syncPromptConfig.promptKind === 'replay_local' ? (
+                ) : syncPromptConfig.promptKind === 'fast_forward_and_replay' ? (
                   <>
                     Press <strong>OK</strong> to pull in the newer non-overlapping server changes for{' '}
                     <code>{syncPromptConfig.path}</code>, keep your local edits, and continue syncing
