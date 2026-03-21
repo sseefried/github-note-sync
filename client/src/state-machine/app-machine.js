@@ -103,7 +103,7 @@ export function buildResolutionState(
   } else if (fastForward) {
     nextResolution = {
       busy: false,
-      kind: fastForward.kind === 'fast_forward_and_replay' ? 'fast_forward_and_replay' : 'adopt_remote',
+      kind: 'fast_forward',
       prompt: fastForward,
     };
   } else if (selectedConflict) {

@@ -625,7 +625,7 @@ export default function App() {
   const pendingOperationCount = replicaState.pendingOperationCount;
   const syncingOperations = syncStateMachine.phase === 'syncing';
   const fastForwardPrompt =
-    resolutionState.kind === 'adopt_remote' || resolutionState.kind === 'fast_forward_and_replay'
+    resolutionState.kind === 'fast_forward'
       ? resolutionState.prompt
       : null;
   const selectedConflictOperation =
@@ -633,8 +633,7 @@ export default function App() {
   const reloadFromServerPrompt =
     resolutionState.kind === 'reload_from_server' ? resolutionState.prompt : null;
   const applyingFastForward =
-    resolutionState.busy &&
-    (resolutionState.kind === 'adopt_remote' || resolutionState.kind === 'fast_forward_and_replay');
+    resolutionState.busy && resolutionState.kind === 'fast_forward';
   const committingConflictMarkers =
     resolutionState.busy && resolutionState.kind === 'merge_with_remote';
   const reloadingConflictFromServer =
@@ -1626,7 +1625,7 @@ export default function App() {
               currentContent,
               currentRevision,
               headRevision,
-              kind: 'fast_forward_and_replay',
+              strategy: 'preserve_local_and_replay',
               mergedContent: fastForwardResult.mergedContent,
               path: activeOperation.path,
               repoAlias: activeOperation.repoAlias,
@@ -2111,7 +2110,7 @@ export default function App() {
             currentContent: data.content,
             currentRevision: data.revision ?? null,
             headRevision: repoSnapshot?.headRevision ?? null,
-            kind: 'adopt_remote',
+            strategy: 'adopt_remote',
             mergedContent: data.content,
             path,
             repoAlias,
@@ -2998,7 +2997,7 @@ export default function App() {
     setSaveError('');
 
     try {
-      if (prompt.kind === 'adopt_remote') {
+      if (prompt.strategy === 'adopt_remote') {
         await adoptFetchedFile({
           content: prompt.currentContent,
           headRevision: prompt.headRevision,
@@ -3047,15 +3046,15 @@ export default function App() {
           ? {
               ...currentStatus,
               lastSyncMessage:
-                prompt.kind === 'adopt_remote'
+                prompt.strategy === 'adopt_remote'
                   ? `Pulled in newer server changes for ${prompt.path}.`
                   : `Pulled in newer non-overlapping server changes for ${prompt.path}. Retrying sync.`,
-              lastSyncStatus: prompt.kind === 'adopt_remote' ? 'ready' : 'dirty',
+              lastSyncStatus: prompt.strategy === 'adopt_remote' ? 'ready' : 'dirty',
             }
           : currentStatus,
       );
 
-      if (prompt.kind === 'fast_forward_and_replay') {
+      if (prompt.strategy === 'preserve_local_and_replay') {
         const nextOperation = await preparePendingOperation(prompt.repoAlias, prompt.path);
 
         if (nextOperation) {
@@ -3280,12 +3279,12 @@ export default function App() {
           disabled: applyingFastForward || !remoteActionsEnabled,
           eyebrow: 'Server Changes Available',
           headline:
-            fastForwardPrompt.kind === 'adopt_remote'
+            fastForwardPrompt.strategy === 'adopt_remote'
               ? 'Pull in newer server changes'
               : 'Pull in newer non-overlapping server changes',
           onConfirm: handleApplyFastForward,
           path: fastForwardPrompt.path,
-          promptKind: fastForwardPrompt.kind,
+          promptKind: 'fast_forward',
         }
       : selectedConflictOperation
         ? {
@@ -3761,12 +3760,13 @@ export default function App() {
                     available. Press <strong>OK</strong> to discard the blocked local conflict flow
                     and reload the latest server version of this file.
                   </>
-                ) : syncPromptConfig.promptKind === 'adopt_remote' ? (
+                ) : syncPromptConfig.promptKind === 'fast_forward' &&
+                  fastForwardPrompt?.strategy === 'adopt_remote' ? (
                   <>
                     Press <strong>OK</strong> to replace the currently shown cached version of{' '}
                     <code>{syncPromptConfig.path}</code> with the newer server version.
                   </>
-                ) : syncPromptConfig.promptKind === 'fast_forward_and_replay' ? (
+                ) : syncPromptConfig.promptKind === 'fast_forward' ? (
                   <>
                     Press <strong>OK</strong> to pull in the newer non-overlapping server changes for{' '}
                     <code>{syncPromptConfig.path}</code>, keep your local edits, and continue syncing

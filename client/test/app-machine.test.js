@@ -36,7 +36,7 @@ test('deriveFilePhase distinguishes none, loading, and ready', () => {
 
 test('buildResolutionState prefers reload prompts over fast-forward and conflicts', () => {
   const resolution = buildResolutionState({
-    fastForward: { kind: 'fast_forward_and_replay', path: 'a.md', repoAlias: 'notes' },
+    fastForward: { strategy: 'preserve_local_and_replay', path: 'a.md', repoAlias: 'notes' },
     reloadPrompt: { path: 'b.md', repoAlias: 'notes' },
     selectedConflict: { opId: '1', path: 'c.md', repoAlias: 'notes' },
   });
@@ -74,8 +74,8 @@ test('reducer clears busy when the resolution prompt is cleared', () => {
     ...createInitialAppMachineState(),
     resolution: {
       busy: true,
-      kind: 'fast_forward_and_replay',
-      prompt: { kind: 'fast_forward_and_replay', path: 'todo.md', repoAlias: 'notes' },
+      kind: 'fast_forward',
+      prompt: { strategy: 'preserve_local_and_replay', path: 'todo.md', repoAlias: 'notes' },
     },
   };
 
