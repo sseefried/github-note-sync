@@ -599,6 +599,9 @@ export default function App() {
   const activeRepoAliasRef = useRef('');
   const connectivityStatusRef = useRef(getConnectivityStatusFromNavigator());
   const conflictDialogActiveRef = useRef(false);
+  const fastForwardPromptRef = useRef(null);
+  const reloadFromServerPromptRef = useRef(null);
+  const selectedConflictOperationRef = useRef(null);
   const flushPendingWriteRef = useRef(null);
   const flushTimerRef = useRef(null);
   const loadFileRequestIdRef = useRef(0);
@@ -792,6 +795,9 @@ export default function App() {
   }, [connectivityStatus]);
 
   useEffect(() => {
+    fastForwardPromptRef.current = fastForwardPrompt;
+    reloadFromServerPromptRef.current = reloadFromServerPrompt;
+    selectedConflictOperationRef.current = selectedConflictOperation;
     conflictDialogActiveRef.current = Boolean(
       fastForwardPrompt || reloadFromServerPrompt || selectedConflictOperation,
     );
@@ -1025,10 +1031,13 @@ export default function App() {
   }
 
   function setSyncPromptState({
-    fastForward = fastForwardPrompt,
-    reloadPrompt = reloadFromServerPrompt,
-    selectedConflict = selectedConflictOperation,
+    fastForward = fastForwardPromptRef.current,
+    reloadPrompt = reloadFromServerPromptRef.current,
+    selectedConflict = selectedConflictOperationRef.current,
   }) {
+    fastForwardPromptRef.current = fastForward;
+    reloadFromServerPromptRef.current = reloadPrompt;
+    selectedConflictOperationRef.current = selectedConflict;
     conflictDialogActiveRef.current = Boolean(fastForward || reloadPrompt || selectedConflict);
     setFastForwardPrompt(fastForward);
     setReloadFromServerPrompt(reloadPrompt);
