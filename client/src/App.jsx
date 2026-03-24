@@ -602,10 +602,11 @@ export default function App() {
 
   const sessionState = machineState.session;
   const workspaceState = machineState.workspace;
-  const fileState = machineState.file;
-  const replicaState = machineState.replica;
-  const resolutionState = machineState.resolution;
-  const syncStateMachine = machineState.sync;
+  const fileState = workspaceState.file;
+  const replicaState = workspaceState.replica;
+  const interactionState = workspaceState.interaction;
+  const resolutionState = interactionState.resolution;
+  const syncStateMachine = workspaceState.sync;
 
   const authReady = sessionState.phase !== 'booting';
   const authUser = sessionState.user;
@@ -625,19 +626,19 @@ export default function App() {
   const pendingOperationCount = replicaState.pendingOperationCount;
   const syncingOperations = syncStateMachine.phase === 'syncing';
   const fastForwardPrompt =
-    resolutionState.kind === 'fast_forward'
+    resolutionState?.kind === 'fast_forward'
       ? resolutionState.prompt
       : null;
   const selectedConflictOperation =
-    resolutionState.kind === 'merge_with_remote' ? resolutionState.prompt : null;
+    resolutionState?.kind === 'merge_with_remote' ? resolutionState.prompt : null;
   const reloadFromServerPrompt =
-    resolutionState.kind === 'reload_from_server' ? resolutionState.prompt : null;
+    resolutionState?.kind === 'reload_from_server' ? resolutionState.prompt : null;
   const applyingFastForward =
-    resolutionState.busy && resolutionState.kind === 'fast_forward';
+    Boolean(resolutionState?.busy && resolutionState?.kind === 'fast_forward');
   const committingConflictMarkers =
-    resolutionState.busy && resolutionState.kind === 'merge_with_remote';
+    Boolean(resolutionState?.busy && resolutionState?.kind === 'merge_with_remote');
   const reloadingConflictFromServer =
-    resolutionState.busy && resolutionState.kind === 'reload_from_server';
+    Boolean(resolutionState?.busy && resolutionState?.kind === 'reload_from_server');
 
   function setAuthReady(nextValue) {
     const nextReady = resolveStateValue(nextValue, authReady);
@@ -854,7 +855,7 @@ export default function App() {
           reloadPrompt: reloadFromServerPrompt,
           selectedConflict: selectedConflictOperation,
         },
-        resolutionState,
+        interactionState,
       ),
     });
   }
@@ -870,7 +871,7 @@ export default function App() {
           reloadPrompt: reloadFromServerPrompt,
           selectedConflict: nextPrompt,
         },
-        resolutionState,
+        interactionState,
       ),
     });
   }
@@ -886,7 +887,7 @@ export default function App() {
           reloadPrompt: nextPrompt,
           selectedConflict: selectedConflictOperation,
         },
-        resolutionState,
+        interactionState,
       ),
     });
   }
@@ -1318,7 +1319,7 @@ export default function App() {
           reloadPrompt,
           selectedConflict,
         },
-        resolutionState,
+        interactionState,
       ),
     });
   }
@@ -3259,9 +3260,7 @@ export default function App() {
   const remoteActionsEnabled = connectivityStatus === 'online' && repoError === '';
   const showEditorPane = !mobileLayout || mobilePage === 'editor';
   const showTreePane = !mobileLayout || mobilePage === 'files';
-  const conflictDialogActive = Boolean(
-    fastForwardPrompt || reloadFromServerPrompt || selectedConflictOperation,
-  );
+  const conflictDialogActive = interactionState.phase === 'resolving';
   const editorInteractionLocked = conflictDialogActive || loadingFile;
   const syncPromptConfig = reloadFromServerPrompt
     ? {

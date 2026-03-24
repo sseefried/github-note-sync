@@ -94,6 +94,8 @@ If the browser cannot reach the server but a cached authenticated session exists
 If you want HTTPS locally, terminate TLS in an external reverse proxy and point the browser at that proxy rather than teaching the client dev server about certificates.
 For longer-lived browser sessions, increase the server `sessionTtlMs` value and keep cookie settings aligned with your deployment topology.
 
+To regenerate the reducer diagram from the repo root, run `dot -Tpdf state-machine.dot -o state-machine.pdf`.
+
 ### Install As Android App (Chrome)
 
 1. Build and serve the client over HTTPS.
@@ -188,6 +190,8 @@ The client service uses `vite preview`, so the systemd unit serves the prebuilt 
 That internal preview listener is meant to sit behind your HTTPS reverse proxy; browsing directly to its HTTP port should show the HTTPS-required screen.
 
 ## Architecture
+
+The client keeps its app state in a single React reducer (`src/state-machine/app-machine.js`) with a top-level session slice, a top-level connectivity field, and a nested workspace slice that owns file, sync, replica, and interaction state. `workspace.interaction` only exists while the app is actually resolving a prompt, so the old sentinel `resolution.kind === 'none'` state is gone. `deriveWorkspacePhase()` and `deriveFilePhase()` compute phase values from the current inputs, while `buildResolutionState()` now constructs the nested interaction branch, enforces the prompt precedence order `reload_from_server` > `fast_forward` > `merge_with_remote`, and preserves the busy flag when the prompt identity stays the same. The Graphviz source and rendered PDF for the state machine live at `../state-machine.dot` and `../state-machine.pdf`.
 
 The client is a React app built with Vite. A thin CLI wrapper still requires `--server-url=<url>` and injects that value into the build/runtime environment so the UI can call the separate API. The client itself stays HTTP-only at the app-server level; if you want HTTPS locally or in production, terminate TLS in an external reverse proxy so the transport model matches production instead of embedding certificate handling into the app. In local HTTPS testing, a proxy such as Caddy sits in front of both the Vite dev server and the API server and exposes stable HTTPS origins like `https://notes.localhost` and `https://api.notes.localhost`. Because modern Vite rejects unknown `Host` headers by default, the client config keeps an explicit allowlist for proxied browser hostnames in both `vite dev` and `vite preview`; `notes.internal.asymptoticsecurity.com` is allowed by default, and extra hostnames can be supplied through `VITE_ALLOWED_HOSTS`. A startup guard still refuses to boot the app for plain HTTP browser sessions, but it now checks both the browser URL scheme and a small same-origin request-context endpoint served by Vite, so reverse proxies can mark the original request as secure with `X-Forwarded-Proto: https` while direct HTTP visits to the raw Vite or preview ports remain intentionally unusable.
 

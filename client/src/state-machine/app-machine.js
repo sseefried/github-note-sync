@@ -1,36 +1,35 @@
 export function createInitialAppMachineState(connectivity = 'online') {
   return {
     connectivity,
-    file: {
-      content: '',
-      debugBaseCommit: null,
-      path: null,
-      phase: 'none',
-      saveError: '',
-    },
-    replica: {
-      blockedConflictCount: 0,
-      pendingOperationCount: 0,
-    },
-    resolution: {
-      busy: false,
-      kind: 'none',
-      prompt: null,
-    },
     session: {
       hasUsers: true,
       phase: 'booting',
       registrationOpen: false,
       user: null,
     },
-    sync: {
-      phase: 'idle',
-    },
     workspace: {
       error: '',
       phase: 'none',
       status: null,
       tree: null,
+      file: {
+        content: '',
+        debugBaseCommit: null,
+        path: null,
+        phase: 'none',
+        saveError: '',
+      },
+      interaction: {
+        phase: 'browsing',
+        resolution: null,
+      },
+      replica: {
+        blockedConflictCount: 0,
+        pendingOperationCount: 0,
+      },
+      sync: {
+        phase: 'idle',
+      },
     },
   };
 }
@@ -67,17 +66,19 @@ export function deriveFilePhase({
 }
 
 function getResolutionPromptIdentity(resolution) {
-  if (!resolution || resolution.kind === 'none' || !resolution.prompt) {
+  const nextResolution = resolution?.resolution ?? resolution;
+
+  if (!nextResolution || resolution?.phase !== 'resolving' || !nextResolution.prompt) {
     return '';
   }
 
-  const { prompt } = resolution;
+  const { prompt } = nextResolution;
 
-  if (resolution.kind === 'merge_with_remote') {
+  if (nextResolution.kind === 'merge_with_remote') {
     return `${prompt.repoAlias ?? ''}:${prompt.path ?? ''}:${prompt.opId ?? ''}`;
   }
 
-  return `${resolution.kind}:${prompt.repoAlias ?? ''}:${prompt.path ?? ''}`;
+  return `${nextResolution.kind}:${prompt.repoAlias ?? ''}:${prompt.path ?? ''}`;
 }
 
 export function buildResolutionState(
@@ -86,46 +87,58 @@ export function buildResolutionState(
     reloadPrompt = null,
     selectedConflict = null,
   },
-  currentResolution = createInitialAppMachineState().resolution,
+  currentResolution = createInitialAppMachineState().workspace.interaction,
 ) {
-  let nextResolution = {
-    busy: false,
-    kind: 'none',
-    prompt: null,
+  let nextInteraction = {
+    phase: 'browsing',
+    resolution: null,
   };
 
   if (reloadPrompt) {
-    nextResolution = {
-      busy: false,
-      kind: 'reload_from_server',
-      prompt: reloadPrompt,
+    nextInteraction = {
+      phase: 'resolving',
+      resolution: {
+        busy: false,
+        kind: 'reload_from_server',
+        prompt: reloadPrompt,
+      },
     };
   } else if (fastForward) {
-    nextResolution = {
-      busy: false,
-      kind: 'fast_forward',
-      prompt: fastForward,
+    nextInteraction = {
+      phase: 'resolving',
+      resolution: {
+        busy: false,
+        kind: 'fast_forward',
+        prompt: fastForward,
+      },
     };
   } else if (selectedConflict) {
-    nextResolution = {
-      busy: false,
-      kind: 'merge_with_remote',
-      prompt: selectedConflict,
+    nextInteraction = {
+      phase: 'resolving',
+      resolution: {
+        busy: false,
+        kind: 'merge_with_remote',
+        prompt: selectedConflict,
+      },
     };
   }
 
   if (
-    currentResolution?.busy &&
-    currentResolution.kind === nextResolution.kind &&
-    getResolutionPromptIdentity(currentResolution) === getResolutionPromptIdentity(nextResolution)
+    currentResolution?.phase === 'resolving' &&
+    currentResolution.resolution?.busy &&
+    currentResolution.resolution.kind === nextInteraction.resolution?.kind &&
+    getResolutionPromptIdentity(currentResolution) === getResolutionPromptIdentity(nextInteraction)
   ) {
     return {
-      ...nextResolution,
-      busy: true,
+      ...nextInteraction,
+      resolution: {
+        ...nextInteraction.resolution,
+        busy: true,
+      },
     };
   }
 
-  return nextResolution;
+  return nextInteraction;
 }
 
 export function appMachineReducer(state, action) {
@@ -162,50 +175,71 @@ export function appMachineReducer(state, action) {
     case 'FILE_PATCH':
       return {
         ...state,
-        file: {
-          ...state.file,
-          ...action.patch,
+        workspace: {
+          ...state.workspace,
+          file: {
+            ...state.workspace.file,
+            ...action.patch,
+          },
         },
       };
     case 'FILE_SET_PHASE':
       return {
         ...state,
-        file: {
-          ...state.file,
-          phase: action.phase,
+        workspace: {
+          ...state.workspace,
+          file: {
+            ...state.workspace.file,
+            phase: action.phase,
+          },
         },
       };
     case 'REPLICA_PATCH':
       return {
         ...state,
-        replica: {
-          ...state.replica,
-          ...action.patch,
+        workspace: {
+          ...state.workspace,
+          replica: {
+            ...state.workspace.replica,
+            ...action.patch,
+          },
         },
       };
     case 'RESOLUTION_SET':
       return {
         ...state,
-        resolution: action.resolution,
+        workspace: {
+          ...state.workspace,
+          interaction: action.resolution,
+        },
       };
     case 'RESOLUTION_SET_BUSY':
-      if (state.resolution.kind === 'none') {
+      if (state.workspace.interaction.phase !== 'resolving' || !state.workspace.interaction.resolution) {
         return state;
       }
 
       return {
         ...state,
-        resolution: {
-          ...state.resolution,
-          busy: action.busy,
+        workspace: {
+          ...state.workspace,
+          interaction: {
+            ...state.workspace.interaction,
+            resolution: {
+              ...state.workspace.interaction.resolution,
+              busy: action.busy,
+            },
+          },
         },
       };
     case 'SYNC_SET_PHASE':
       return {
         ...state,
-        sync: {
-          ...state.sync,
-          phase: action.phase,
+        workspace: {
+          ...state.workspace,
+          sync: {
+            ...state.workspace.sync,
+            phase: action.phase,
+          },
         },
       };
     case 'RESET_WORKSPACE_MACHINE': {
@@ -213,10 +247,6 @@ export function appMachineReducer(state, action) {
 
       return {
         ...state,
-        file: initialState.file,
-        replica: initialState.replica,
-        resolution: initialState.resolution,
-        sync: initialState.sync,
         workspace: initialState.workspace,
       };
     }
