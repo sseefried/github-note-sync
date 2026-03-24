@@ -213,6 +213,10 @@ function resolveStateValue(nextValue, currentValue) {
   return typeof nextValue === 'function' ? nextValue(currentValue) : nextValue;
 }
 
+function createPendingWriteGenerationKey(repoAlias, filePath) {
+  return `${repoAlias}::${filePath}`;
+}
+
 function FilePlusIcon() {
   return (
     <svg aria-hidden="true" className="tree-action-icon" viewBox="0 0 16 16">
@@ -597,6 +601,7 @@ export default function App() {
   const flushTimerRef = useRef(null);
   const loadFileRequestIdRef = useRef(0);
   const syncingOperationsRef = useRef(false);
+  const pendingWriteGenerationRef = useRef(new Map());
   const workspaceStoreRef = useRef(null);
   const resizeCleanupRef = useRef(null);
 
@@ -639,6 +644,19 @@ export default function App() {
     Boolean(resolutionState?.busy && resolutionState?.kind === 'merge_with_remote');
   const reloadingConflictFromServer =
     Boolean(resolutionState?.busy && resolutionState?.kind === 'reload_from_server');
+
+  function bumpPendingWriteGeneration(repoAlias, filePath) {
+    const key = createPendingWriteGenerationKey(repoAlias, filePath);
+    const nextGeneration = (pendingWriteGenerationRef.current.get(key) ?? 0) + 1;
+    pendingWriteGenerationRef.current.set(key, nextGeneration);
+    return nextGeneration;
+  }
+
+  function getPendingWriteGeneration(repoAlias, filePath) {
+    return pendingWriteGenerationRef.current.get(
+      createPendingWriteGenerationKey(repoAlias, filePath),
+    ) ?? 0;
+  }
 
   function setAuthReady(nextValue) {
     const nextReady = resolveStateValue(nextValue, authReady);
@@ -1332,10 +1350,19 @@ export default function App() {
     });
   }
 
-  async function preparePendingOperation(repoAlias, filePath, attempt = 0) {
+  async function preparePendingOperation(
+    repoAlias,
+    filePath,
+    attempt = 0,
+    expectedGeneration = getPendingWriteGeneration(repoAlias, filePath),
+  ) {
     const workspaceStore = workspaceStoreRef.current;
 
     if (!workspaceStore || !repoAlias || !filePath) {
+      return null;
+    }
+
+    if (getPendingWriteGeneration(repoAlias, filePath) !== expectedGeneration) {
       return null;
     }
 
@@ -1344,6 +1371,10 @@ export default function App() {
       workspaceStore.getFileSnapshot(repoAlias, filePath),
       workspaceStore.getPendingOperation(repoAlias, filePath),
     ]);
+
+    if (getPendingWriteGeneration(repoAlias, filePath) !== expectedGeneration) {
+      return null;
+    }
 
     if (!fileSnapshot) {
       await workspaceStore.clearPendingOperation(repoAlias, filePath);
@@ -1425,7 +1456,11 @@ export default function App() {
         return null;
       }
 
-      return preparePendingOperation(repoAlias, filePath, attempt + 1);
+      return preparePendingOperation(repoAlias, filePath, attempt + 1, expectedGeneration);
+    }
+
+    if (getPendingWriteGeneration(repoAlias, filePath) !== expectedGeneration) {
+      return null;
     }
 
     nextOperation = await workspaceStore.upsertPendingOperation({
@@ -1490,6 +1525,21 @@ export default function App() {
           currentOperation.opId !== pendingOperation.opId ||
           (currentOperation.status !== 'pending' && currentOperation.status !== 'sent')
         ) {
+          continue;
+        }
+
+        const currentFileSnapshot = await workspaceStore.getFileSnapshot(
+          pendingOperation.repoAlias,
+          pendingOperation.path,
+        );
+
+        if (
+          currentFileSnapshot &&
+          (currentFileSnapshot.content !== currentOperation.targetContent ||
+            currentFileSnapshot.revision !== currentOperation.baseRevision)
+        ) {
+          bumpPendingWriteGeneration(pendingOperation.repoAlias, pendingOperation.path);
+          await preparePendingOperation(pendingOperation.repoAlias, pendingOperation.path);
           continue;
         }
 
@@ -1578,6 +1628,7 @@ export default function App() {
           tree: activeOperation.repoAlias === activeRepoAliasRef.current ? tree : undefined,
         });
 
+        bumpPendingWriteGeneration(activeOperation.repoAlias, activeOperation.path);
         await preparePendingOperation(activeOperation.repoAlias, activeOperation.path);
         activeOperation = null;
       }
@@ -1994,6 +2045,7 @@ export default function App() {
       return null;
     }
 
+    bumpPendingWriteGeneration(repoAlias, path);
     await workspaceStore.saveLocalFileContent({
       content,
       filePath: path,
@@ -2007,6 +2059,7 @@ export default function App() {
       revision,
     });
     await workspaceStore.clearPendingOperation(repoAlias, path);
+    bumpPendingWriteGeneration(repoAlias, path);
     await syncOperationCounts(workspaceStore);
 
     if (typeof headRevision === 'string') {
@@ -2848,6 +2901,7 @@ export default function App() {
     }
 
     const updatedAt = new Date().toISOString();
+    const prepareGeneration = bumpPendingWriteGeneration(activeRepoAliasRef.current, activePath);
     workspaceStoreRef.current
       ?.saveLocalFileContent({
         content: nextContent,
@@ -2856,7 +2910,12 @@ export default function App() {
         updatedAt,
       })
       .then(async () => {
-        const operation = await preparePendingOperation(activeRepoAliasRef.current, activePath);
+        const operation = await preparePendingOperation(
+          activeRepoAliasRef.current,
+          activePath,
+          0,
+          prepareGeneration,
+        );
 
         if (operation?.status === 'missing_revision') {
           setSaveError(
@@ -2913,6 +2972,7 @@ export default function App() {
 
     setCommittingConflictMarkers(true);
     setSaveError('');
+    bumpPendingWriteGeneration(operation.repoAlias, operation.path);
 
     try {
       const data = await fetchJson('/api/conflicts/merge', {
@@ -2948,6 +3008,7 @@ export default function App() {
         status: data.status ?? statusRef.current,
         tree,
       });
+      bumpPendingWriteGeneration(operation.repoAlias, operation.path);
       await syncOperationCounts(workspaceStore);
 
       if (
@@ -2996,6 +3057,7 @@ export default function App() {
 
     setApplyingFastForward(true);
     setSaveError('');
+    bumpPendingWriteGeneration(prompt.repoAlias, prompt.path);
 
     try {
       if (prompt.strategy === 'adopt_remote') {
@@ -3056,7 +3118,12 @@ export default function App() {
       );
 
       if (prompt.strategy === 'preserve_local_and_replay') {
-        const nextOperation = await preparePendingOperation(prompt.repoAlias, prompt.path);
+        const nextOperation = await preparePendingOperation(
+          prompt.repoAlias,
+          prompt.path,
+          0,
+          bumpPendingWriteGeneration(prompt.repoAlias, prompt.path),
+        );
 
         if (nextOperation) {
           await flushPendingWrite();
@@ -3096,6 +3163,7 @@ export default function App() {
 
     setReloadingConflictFromServer(true);
     setSaveError('');
+    bumpPendingWriteGeneration(operation.repoAlias, operation.path);
 
     try {
       await workspaceStore.clearPendingOperation(operation.repoAlias, operation.path);
