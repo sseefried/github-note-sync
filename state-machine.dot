@@ -1,0 +1,144 @@
+digraph GitHubNoteSyncClientStateMachine {
+  graph [
+    bgcolor="white",
+    compound=true,
+    fontname="Helvetica",
+    nodesep="0.4",
+    pad="0.25",
+    rankdir=LR,
+    ranksep="0.75",
+    splines=true
+  ];
+
+  node [
+    color="#334155",
+    fillcolor="#f8fafc",
+    fontname="Helvetica",
+    fontsize=10,
+    shape=box,
+    style="rounded,filled"
+  ];
+
+  edge [color="#475569", fontname="Helvetica", fontsize=9, arrowsize=0.8];
+
+  legend [
+    shape=note,
+    fillcolor="#fff7ed",
+    color="#c2410c",
+    label="Nested app machine for the React reducer.\nTop-level: session and connectivity.\nWorkspace owns file, sync, replica, and interaction."
+  ];
+
+  subgraph cluster_session {
+    label="session";
+    color="#cbd5e1";
+    style="rounded";
+
+    session_booting [label="booting", fillcolor="#e2e8f0"];
+    session_anonymous [label="anonymous", fillcolor="#e2e8f0"];
+    session_authenticated [label="authenticated", fillcolor="#dbeafe", color="#2563eb"];
+
+    session_booting -> session_anonymous [label="SESSION_PATCH\nuser = null"];
+    session_booting -> session_authenticated [label="SESSION_PATCH\nuser != null"];
+    session_anonymous -> session_authenticated [label="login or registration success"];
+    session_authenticated -> session_anonymous [label="logout or 401 recovery"];
+  }
+
+  connectivity_online [label="online", fillcolor="#ecfccb", color="#4d7c0f"];
+  connectivity_degraded [label="degraded", fillcolor="#fef3c7", color="#ca8a04"];
+  connectivity_offline [label="offline", fillcolor="#fee2e2", color="#b91c1c"];
+  connectivity_note [shape=note, label="connectivity is orthogonal", fillcolor="#f8fafc"];
+
+  subgraph cluster_workspace {
+    label="workspace";
+    color="#cbd5e1";
+    style="rounded";
+
+    workspace_none [label="none", fillcolor="#e2e8f0"];
+    workspace_hydrating [label="hydrating", fillcolor="#dbeafe", color="#2563eb"];
+    workspace_unavailable [label="unavailable", fillcolor="#fee2e2", color="#b91c1c"];
+    workspace_ready [label="ready", fillcolor="#ecfccb", color="#4d7c0f"];
+
+    workspace_none -> workspace_hydrating [label="WORKSPACE_SET_PHASE\nloading = true"];
+    workspace_hydrating -> workspace_ready [label="WORKSPACE_PATCH\nactive alias + tree/status ready"];
+    workspace_hydrating -> workspace_unavailable [label="WORKSPACE_PATCH\nerror present"];
+    workspace_ready -> workspace_none [label="RESET_WORKSPACE_MACHINE\nalias cleared"];
+    workspace_unavailable -> workspace_none [label="RESET_WORKSPACE_MACHINE\nalias cleared"];
+
+    subgraph cluster_workspace_ready {
+      label="workspace.ready";
+      color="#94a3b8";
+      style="rounded,dashed";
+
+      file_none [label="file.none", fillcolor="#e2e8f0"];
+      file_loading [label="file.loading", fillcolor="#dbeafe", color="#2563eb"];
+      file_ready [label="file.ready", fillcolor="#ecfccb", color="#4d7c0f"];
+
+      sync_idle [label="sync.idle", fillcolor="#e2e8f0"];
+      sync_syncing [label="sync.syncing", fillcolor="#dbeafe", color="#2563eb"];
+
+      interaction_browsing [label="interaction.browsing", fillcolor="#e2e8f0"];
+      interaction_resolving [label="interaction.resolving", fillcolor="#fef3c7", color="#ca8a04"];
+
+      replica_note [shape=note, label="replica counters\nblockedConflictCount\npendingOperationCount", fillcolor="#f8fafc"];
+
+      file_none -> file_loading [label="FILE_SET_PHASE\nloading = true"];
+      file_loading -> file_ready [label="FILE_SET_PHASE\npath loaded"];
+      file_ready -> file_none [label="RESET_WORKSPACE_MACHINE"];
+
+      sync_idle -> sync_syncing [label="SYNC_SET_PHASE\nsyncing = true"];
+      sync_syncing -> sync_idle [label="SYNC_SET_PHASE\nsyncing = false"];
+
+      interaction_browsing -> interaction_resolving [label="RESOLUTION_SET\nprompt appears"];
+      interaction_resolving -> interaction_browsing [label="RESOLUTION_SET\nprompt cleared"];
+
+      subgraph cluster_resolution {
+        label="workspace.ready.interaction.resolving";
+        color="#f59e0b";
+        style="rounded,dashed";
+
+        resolution_fast_forward [label="fast_forward\nbusy=false", fillcolor="#fef3c7", color="#ca8a04"];
+        resolution_fast_forward_busy [label="fast_forward\nbusy=true", fillcolor="#fde68a", color="#b45309"];
+        resolution_reload [label="reload_from_server\nbusy=false", fillcolor="#fef3c7", color="#ca8a04"];
+        resolution_reload_busy [label="reload_from_server\nbusy=true", fillcolor="#fde68a", color="#b45309"];
+        resolution_conflict [label="merge_with_remote\nbusy=false", fillcolor="#fef3c7", color="#ca8a04"];
+        resolution_conflict_busy [label="merge_with_remote\nbusy=true", fillcolor="#fde68a", color="#b45309"];
+
+        interaction_resolving -> resolution_reload [label="reloadPrompt wins"];
+        interaction_resolving -> resolution_fast_forward [label="fastForward"];
+        interaction_resolving -> resolution_conflict [label="selectedConflict"];
+
+        resolution_fast_forward -> resolution_fast_forward_busy [label="RESOLUTION_SET_BUSY\nbusy = true"];
+        resolution_fast_forward_busy -> resolution_fast_forward [label="RESOLUTION_SET_BUSY\nbusy = false"];
+        resolution_reload -> resolution_reload_busy [label="RESOLUTION_SET_BUSY\nbusy = true"];
+        resolution_reload_busy -> resolution_reload [label="RESOLUTION_SET_BUSY\nbusy = false"];
+        resolution_conflict -> resolution_conflict_busy [label="RESOLUTION_SET_BUSY\nbusy = true"];
+        resolution_conflict_busy -> resolution_conflict [label="RESOLUTION_SET_BUSY\nbusy = false"];
+
+        resolution_fast_forward -> sync_syncing [label="acknowledge\nrebase and retry sync"];
+        resolution_fast_forward_busy -> sync_syncing [label="done"];
+        resolution_reload -> file_ready [label="acknowledge\nadopt newer server content"];
+        resolution_reload_busy -> file_ready [label="done"];
+        resolution_conflict -> sync_syncing [label="acknowledge\nsend merge payload"];
+        resolution_conflict_busy -> sync_syncing [label="done"];
+      }
+
+      file_ready -> interaction_browsing [label="default editing mode"];
+    }
+
+    workspace_ready -> file_none [label="enter ready workspace"];
+  }
+
+  session_authenticated -> workspace_none [label="workspace unlocks after auth"];
+  workspace_ready -> connectivity_online [style=invis];
+  workspace_ready -> replica_note [style=invis];
+
+  file_ready -> connectivity_offline [label="CONNECTIVITY_SET\nnavigator offline"];
+  file_ready -> connectivity_degraded [label="CONNECTIVITY_SET\nfetch failure"];
+  sync_syncing -> connectivity_offline [label="CONNECTIVITY_SET\nnavigator offline"];
+  sync_syncing -> connectivity_degraded [label="CONNECTIVITY_SET\nfetch failure"];
+  connectivity_offline -> file_ready [label="CONNECTIVITY_SET\nnavigator online"];
+  connectivity_degraded -> file_ready [label="CONNECTIVITY_SET\nserver reachable"];
+
+  connectivity_note -> connectivity_online [style=invis];
+
+}
