@@ -11,8 +11,17 @@ export function classifyFetchedFileSync({
   const hasLocalChanges = cachedSnapshot.content !== cachedSnapshot.serverContent;
   const matchesCachedServer =
     cachedSnapshot.revision === nextRevision && cachedSnapshot.serverContent === nextContent;
+  const matchesCachedLocal = cachedSnapshot.content === nextContent;
 
-  if (matchesCachedServer || hasLocalChanges) {
+  if (matchesCachedServer) {
+    return 'keep_local';
+  }
+
+  if (matchesCachedLocal) {
+    return 'adopt_remote';
+  }
+
+  if (hasLocalChanges) {
     return 'keep_local';
   }
 

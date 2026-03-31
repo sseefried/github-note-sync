@@ -28,6 +28,21 @@ test('classifyFetchedFileSync keeps local content for dirty files', () => {
   );
 });
 
+test('classifyFetchedFileSync adopts the server version when dirty local text already matches it', () => {
+  assert.equal(
+    classifyFetchedFileSync({
+      cachedSnapshot: {
+        content: 'alpha local',
+        revision: 'sha256:alpha',
+        serverContent: 'alpha',
+      },
+      nextContent: 'alpha local',
+      nextRevision: 'sha256:local',
+    }),
+    'adopt_remote',
+  );
+});
+
 test('classifyFetchedFileSync keeps local content when the server revision matches cache', () => {
   assert.equal(
     classifyFetchedFileSync({

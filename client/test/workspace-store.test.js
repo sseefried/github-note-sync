@@ -293,3 +293,48 @@ test('listKnownRepoAliases combines cached repo snapshots and pending operations
 
   assert.deepEqual(await store.listKnownRepoAliases(), ['personal', 'work']);
 });
+
+test('clearRepoAliasData removes repo, file, and pending state for one alias only', async () => {
+  const store = createStore();
+
+  await store.saveRepoSnapshot({
+    repoAlias: 'personal',
+    status: { lastSyncStatus: 'ready' },
+    tree: { children: [], name: 'personal', path: '', type: 'directory' },
+  });
+  await store.saveServerFileSnapshot({
+    content: 'alpha',
+    filePath: 'notes/today.md',
+    repoAlias: 'personal',
+    revision: 'sha256:alpha',
+  });
+  await store.upsertPendingOperation({
+    baseRevision: 'sha256:alpha',
+    filePath: 'notes/today.md',
+    kind: 'patch',
+    payload: { ops: [] },
+    repoAlias: 'personal',
+    targetContent: 'alpha local',
+  });
+
+  await store.saveRepoSnapshot({
+    repoAlias: 'work',
+    status: { lastSyncStatus: 'ready' },
+    tree: { children: [], name: 'work', path: '', type: 'directory' },
+  });
+  await store.saveServerFileSnapshot({
+    content: 'beta',
+    filePath: 'todo.md',
+    repoAlias: 'work',
+    revision: 'sha256:beta',
+  });
+
+  await store.clearRepoAliasData('personal');
+
+  assert.equal(await store.getRepoSnapshot('personal'), null);
+  assert.equal(await store.getFileSnapshot('personal', 'notes/today.md'), null);
+  assert.equal(await store.getPendingOperation('personal', 'notes/today.md'), null);
+
+  assert.equal((await store.getRepoSnapshot('work')).repoAlias, 'work');
+  assert.equal((await store.getFileSnapshot('work', 'todo.md')).content, 'beta');
+});

@@ -548,10 +548,37 @@ export function createWorkspaceStoreWithAdapter(adapter) {
     await Promise.all(STORE_NAMES.map((storeName) => adapter.clear(storeName)));
   }
 
+  async function clearRepoAliasData(repoAlias) {
+    const normalizedRepoAlias = normalizeRepoAlias(repoAlias);
+
+    if (!normalizedRepoAlias) {
+      return;
+    }
+
+    const [fileSnapshots, pendingOperations] = await Promise.all([
+      adapter.list(STORE_FILES),
+      adapter.list(STORE_WRITES),
+    ]);
+    const normalizedPendingOperations = pendingOperations
+      .map((entry) => normalizeLegacyPendingOperation(entry))
+      .filter(Boolean);
+
+    await Promise.all([
+      adapter.delete(STORE_REPOS, normalizedRepoAlias),
+      ...fileSnapshots
+        .filter((entry) => entry?.repoAlias === normalizedRepoAlias && typeof entry?.id === 'string')
+        .map((entry) => adapter.delete(STORE_FILES, entry.id)),
+      ...normalizedPendingOperations
+        .filter((entry) => entry.repoAlias === normalizedRepoAlias && typeof entry.id === 'string')
+        .map((entry) => adapter.delete(STORE_WRITES, entry.id)),
+    ]);
+  }
+
   return {
     acknowledgeOperation,
     blockOperationConflict,
     clearAll,
+    clearRepoAliasData,
     clearPendingOperation,
     countBlockedConflicts,
     countPendingOperations,

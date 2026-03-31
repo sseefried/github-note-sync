@@ -600,6 +600,7 @@ export default function App() {
   const flushPendingWriteRef = useRef(null);
   const flushTimerRef = useRef(null);
   const loadFileRequestIdRef = useRef(0);
+  const backgroundSyncInFlightRef = useRef(false);
   const syncingOperationsRef = useRef(false);
   const pendingWriteGenerationRef = useRef(new Map());
   const workspaceStoreRef = useRef(null);
@@ -1567,6 +1568,7 @@ export default function App() {
                   opId: activeOperation.opId,
                   path: activeOperation.path,
                   payload: activeOperation.payload,
+                  targetContent: activeOperation.targetContent,
                 },
               ],
               repoAlias: activeOperation.repoAlias,
@@ -1656,6 +1658,48 @@ export default function App() {
         );
         const baseContent =
           typeof fileSnapshot?.serverContent === 'string' ? fileSnapshot.serverContent : null;
+
+        if (
+          typeof currentContent === 'string' &&
+          typeof currentRevision === 'string' &&
+          currentContent === activeOperation.targetContent
+        ) {
+          await workspaceStore.acknowledgeOperation({
+            content: currentContent,
+            filePath: activeOperation.path,
+            repoAlias: activeOperation.repoAlias,
+            revision: currentRevision,
+            opId: activeOperation.opId,
+          });
+          await workspaceStore.saveRepoSnapshot({
+            headRevision,
+            repoAlias: activeOperation.repoAlias,
+            selectedPath:
+              activeOperation.repoAlias === activeRepoAliasRef.current
+                ? selectedPathRef.current
+                : undefined,
+            status:
+              activeOperation.repoAlias === activeRepoAliasRef.current
+                ? statusRef.current
+                : undefined,
+            tree: activeOperation.repoAlias === activeRepoAliasRef.current ? tree : undefined,
+          });
+          setSaveError('');
+          setStatus((currentStatus) =>
+            currentStatus
+              ? {
+                  ...currentStatus,
+                  lastSyncMessage: `Server already contains the latest text for ${activeOperation.path}.`,
+                  lastSyncStatus: 'dirty',
+                }
+              : currentStatus,
+          );
+          bumpPendingWriteGeneration(activeOperation.repoAlias, activeOperation.path);
+          await preparePendingOperation(activeOperation.repoAlias, activeOperation.path);
+          activeOperation = null;
+          return;
+        }
+
         const fastForwardResult =
           typeof baseContent === 'string' &&
           typeof currentContent === 'string' &&
@@ -2138,6 +2182,20 @@ export default function App() {
       setConnectivityStatus('online');
       setSelectedPath(path);
       const repoSnapshot = await workspaceStore?.getRepoSnapshot(repoAlias);
+      const fetchedHeadRevision =
+        typeof data.headRevision === 'string' ? data.headRevision : repoSnapshot?.headRevision ?? null;
+
+      if (typeof data.headRevision === 'string') {
+        await workspaceStore?.saveRepoSnapshot({
+          headRevision: data.headRevision,
+          repoAlias,
+          selectedPath: path,
+          status:
+            repoAlias === activeRepoAliasRef.current ? statusRef.current : undefined,
+          tree: repoAlias === activeRepoAliasRef.current ? tree : undefined,
+        });
+      }
+
       const nextAction = classifyFetchedFileSync({
         allowImmediateAdopt: advanceBaseOnFetch,
         cachedSnapshot: cachedFileSnapshot,
@@ -2153,7 +2211,7 @@ export default function App() {
       if (nextAction === 'adopt_remote') {
         await adoptFetchedFile({
           content: data.content,
-          headRevision: repoSnapshot?.headRevision ?? null,
+          headRevision: fetchedHeadRevision,
           path,
           repoAlias,
           revision: data.revision,
@@ -2163,7 +2221,7 @@ export default function App() {
           fastForward: {
             currentContent: data.content,
             currentRevision: data.revision ?? null,
-            headRevision: repoSnapshot?.headRevision ?? null,
+            headRevision: fetchedHeadRevision,
             strategy: 'adopt_remote',
             mergedContent: data.content,
             path,
@@ -2310,6 +2368,34 @@ export default function App() {
       setRepoError(error.message);
     } finally {
       setLoadingTree(false);
+    }
+  }
+
+  async function runBackgroundSync() {
+    if (
+      backgroundSyncInFlightRef.current ||
+      !isAuthenticated ||
+      !workspaceReady
+    ) {
+      return;
+    }
+
+    backgroundSyncInFlightRef.current = true;
+
+    try {
+      await flushPendingWrite();
+
+      if (
+        conflictDialogActiveRef.current ||
+        !activeRepoAliasRef.current ||
+        connectivityStatusRef.current !== 'online'
+      ) {
+        return;
+      }
+
+      await loadState({ repoAlias: activeRepoAliasRef.current });
+    } finally {
+      backgroundSyncInFlightRef.current = false;
     }
   }
 
@@ -2463,11 +2549,7 @@ export default function App() {
     }
 
     const interval = window.setInterval(() => {
-      flushPendingWrite().catch(() => {});
-
-      if (activeRepoAliasRef.current && connectivityStatusRef.current === 'online') {
-        loadState({ repoAlias: activeRepoAliasRef.current }).catch(() => {});
-      }
+      runBackgroundSync().catch(() => {});
     }, 3_000);
 
     return () => window.clearInterval(interval);
@@ -2478,11 +2560,7 @@ export default function App() {
       return;
     }
 
-    flushPendingWrite().catch(() => {});
-
-    if (activeRepoAliasRef.current) {
-      loadState({ repoAlias: activeRepoAliasRef.current }).catch(() => {});
-    }
+    runBackgroundSync().catch(() => {});
   }, [connectivityStatus, isAuthenticated, workspaceReady]);
 
   useEffect(() => {
@@ -2809,6 +2887,18 @@ export default function App() {
     setRepoError('');
 
     try {
+      await flushPendingWrite();
+
+      const aliasOperations =
+        (await workspaceStoreRef.current?.listPendingOperations(editingAlias)) ?? [];
+
+      if (aliasOperations.length > 0) {
+        setRepoError(
+          'Resolve or clear local pending edits for this repo alias before changing its Git repo.',
+        );
+        return;
+      }
+
       const data = await fetchJson(`/api/repos/${encodeURIComponent(editingAlias)}`, {
         body: JSON.stringify({
           repo: editingRepoDraft.trim(),
@@ -2817,6 +2907,10 @@ export default function App() {
       });
 
       setEditingRepoDraft(data.repo);
+
+      if (data.updated) {
+        await workspaceStoreRef.current?.clearRepoAliasData(data.repoAlias);
+      }
 
       if (activeRepoAlias === data.repoAlias) {
         await loadState({ forceReloadFile: true, repoAlias: data.repoAlias });
@@ -2862,6 +2956,8 @@ export default function App() {
 
       const deletedAlias = editingAlias;
       const deletedActiveAlias = activeRepoAliasRef.current === deletedAlias;
+
+      await workspaceStoreRef.current?.clearRepoAliasData(deletedAlias);
 
       if (deletedActiveAlias) {
         navigateToRoute('', '', { replace: true });
