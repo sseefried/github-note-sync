@@ -1,0 +1,277 @@
+digraph GitHubNoteSyncLocalFirstStateMachine {
+  graph [
+    bgcolor="white",
+    compound=true,
+    fontname="Helvetica",
+    nodesep="0.45",
+    pad="0.3",
+    rankdir=LR,
+    ranksep="0.85",
+    splines=true
+  ];
+
+  node [
+    color="#334155",
+    fillcolor="#f8fafc",
+    fontname="Helvetica",
+    fontsize=10,
+    shape=box,
+    style="rounded,filled"
+  ];
+
+  edge [
+    arrowsize=0.8,
+    color="#475569",
+    fontname="Helvetica",
+    fontsize=9
+  ];
+
+  title_note [
+    shape=note,
+    fillcolor="#fff7ed",
+    color="#c2410c",
+    label="State machine for one file under one repo alias.\nFocus: how the implemented local-first sync design avoids false self-conflicts."
+  ];
+
+  legend_note [
+    shape=note,
+    fillcolor="#f8fafc",
+    color="#64748b",
+    label="Key rule:\nWhile the file is dirty, the client freezes the server base\n(serverContent + revision) until an explicit base-advance point."
+  ];
+
+  subgraph cluster_client {
+    label="Client File Replica";
+    color="#cbd5e1";
+    style="rounded";
+
+    unloaded [
+      fillcolor="#e2e8f0",
+      label="Unloaded or uncached\nno active file snapshot"
+    ];
+
+    clean [
+      fillcolor="#dcfce7",
+      color="#15803d",
+      label="Clean replica\ncontent == serverContent\nrevision known"
+    ];
+
+    dirty [
+      fillcolor="#fef3c7",
+      color="#ca8a04",
+      label="Dirty local replica\ncontent != serverContent\nbase frozen"
+    ];
+
+    missing_revision [
+      fillcolor="#fee2e2",
+      color="#b91c1c",
+      label="Sync blocked\nlocal content exists\nbut revision is missing"
+    ];
+
+    pending_patch [
+      fillcolor="#dbeafe",
+      color="#2563eb",
+      label="Pending patch op\nbaseRevision\nbaseCommit\ntargetContent"
+    ];
+
+    sent_patch [
+      fillcolor="#bfdbfe",
+      color="#1d4ed8",
+      label="Patch sent\nwaiting for response\nor safe retry"
+    ];
+
+    fast_forward_prompt [
+      fillcolor="#fde68a",
+      color="#b45309",
+      label="Prompt:\nnon-overlapping remote change\ncan rebase local edit"
+    ];
+
+    reload_prompt [
+      fillcolor="#fde68a",
+      color="#b45309",
+      label="Prompt:\nreload latest server version\nbefore continuing"
+    ];
+
+    blocked_conflict [
+      fillcolor="#fecaca",
+      color="#b91c1c",
+      label="Blocked conflict\ntrue overlap\nwaiting for user confirmation"
+    ];
+
+    merged_clean [
+      fillcolor="#dcfce7",
+      color="#15803d",
+      label="Merged server result adopted\nbase advanced\nmay contain Git conflict markers"
+    ];
+  }
+
+  subgraph cluster_server {
+    label="Server Decision For POST /api/ops";
+    color="#cbd5e1";
+    style="rounded";
+
+    server_apply [
+      fillcolor="#f8fafc",
+      label="Receive patch op\nwith baseRevision\npayload.ops\ntargetContent"
+    ];
+
+    server_applied [
+      fillcolor="#dcfce7",
+      color="#15803d",
+      label="Applied\ncurrentRevision == baseRevision\npatch written"
+    ];
+
+    server_duplicate_receipt [
+      fillcolor="#dcfce7",
+      color="#15803d",
+      label="Duplicate receipt\nsame opId already recorded\nsame file revision"
+    ];
+
+    server_duplicate_converged [
+      fillcolor="#dcfce7",
+      color="#15803d",
+      label="Converged duplicate\nbaseRevision stale\nbut current file == targetContent"
+    ];
+
+    server_conflict [
+      fillcolor="#fecaca",
+      color="#b91c1c",
+      label="409 conflict\ncurrent file differs from targetContent"
+    ];
+  }
+
+  subgraph cluster_safety {
+    label="Cross-Cutting Safety Rails";
+    color="#cbd5e1";
+    style="rounded,dashed";
+
+    rail_background [
+      shape=note,
+      fillcolor="#f8fafc",
+      label="Background maintenance\nrunBackgroundSync()\nflushPendingWrite() first,\nthen loadState()\nNo parallel refresh/write race."
+    ];
+
+    rail_prepare [
+      shape=note,
+      fillcolor="#f8fafc",
+      label="preparePendingOperation()\nrechecks file snapshot,\nop snapshot,\nand repo head before enqueue.\nIf anything moved, it rebuilds."
+    ];
+
+    rail_ack [
+      shape=note,
+      fillcolor="#f8fafc",
+      label="acknowledgeOperation()\nadvances the frozen base\nwithout rewinding newer local text."
+    ];
+
+    rail_alias [
+      shape=note,
+      fillcolor="#f8fafc",
+      label="Repo alias repoint\nflush writes first,\nrefuse change if ops remain,\nclear cached repo/file/op state on success."
+    ];
+  }
+
+  unloaded -> clean [
+    label="loadFile() + adoptFetchedFile()\ninitial fetch or explicit reload adopt"
+  ];
+
+  clean -> dirty [
+    label="updateEditorContent()\nsaveLocalFileContent()\nbase remains frozen"
+  ];
+
+  dirty -> missing_revision [
+    label="preparePendingOperation()\nrevision missing"
+  ];
+
+  missing_revision -> clean [
+    label="loadFile() or reload prompt OK\nfetch trusted server snapshot"
+  ];
+
+  dirty -> clean [
+    label="/api/file fetch where remote == local\nclassifyFetchedFileSync() => adopt_remote\nadvance base, clear stale op"
+  ];
+
+  clean -> reload_prompt [
+    label="/api/file fetch with newer clean remote\nprompt before adopting"
+  ];
+
+  reload_prompt -> clean [
+    label="OK\nadoptFetchedFile()"
+  ];
+
+  dirty -> pending_patch [
+    label="preparePendingOperation()\ncreate patch from frozen serverContent"
+  ];
+
+  pending_patch -> sent_patch [
+    label="flushPendingWrite()"
+  ];
+
+  sent_patch -> server_apply [
+    label="POST /api/ops"
+  ];
+
+  server_apply -> server_applied [label="baseRevision matches"];
+  server_apply -> server_duplicate_receipt [label="same opId already acked"];
+  server_apply -> server_duplicate_converged [label="stale base\nbut file already == targetContent"];
+  server_apply -> server_conflict [label="stale base\nand file differs"];
+
+  server_applied -> clean [
+    label="acknowledgeOperation()\nbase advanced"
+  ];
+
+  server_duplicate_receipt -> clean [
+    label="acknowledgeOperation()\nno false conflict"
+  ];
+
+  server_duplicate_converged -> clean [
+    label="acknowledgeOperation()\nconverged retry absorbed"
+  ];
+
+  clean -> dirty [
+    label="user typed again before ack\nack preserves newer local text",
+    style=dashed
+  ];
+
+  server_conflict -> clean [
+    label="client sees currentContent == targetContent\nlocal convergence recovery",
+    style=dashed
+  ];
+
+  server_conflict -> fast_forward_prompt [
+    label="client detects non-overlapping change"
+  ];
+
+  fast_forward_prompt -> dirty [
+    label="OK\nadvance base to newer server text\nkeep merged local text"
+  ];
+
+  dirty -> pending_patch [
+    label="prepare next replay op",
+    style=dashed
+  ];
+
+  server_conflict -> blocked_conflict [
+    label="client detects true overlap\nblock op"
+  ];
+
+  blocked_conflict -> merged_clean [
+    label="OK\nPOST /api/conflicts/merge\nadopt returned merged file"
+  ];
+
+  merged_clean -> clean [
+    label="replica now clean against returned server state"
+  ];
+
+  blocked_conflict -> reload_prompt [
+    label="base commit unavailable\nreload latest server file instead"
+  ];
+
+  dirty -> rail_prepare [style=dashed, arrowhead=none];
+  sent_patch -> rail_ack [style=dashed, arrowhead=none];
+  clean -> rail_background [style=dashed, arrowhead=none];
+  dirty -> rail_background [style=dashed, arrowhead=none];
+  clean -> rail_alias [style=dashed, arrowhead=none];
+
+  title_note -> unloaded [style=invis];
+  legend_note -> rail_background [style=invis];
+}
