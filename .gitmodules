@@ -1,6 +1,0 @@
-[submodule "github-note-sync-server"]
-	path = github-note-sync-server
-	url = git@github.com:sseefried/github-note-sync-server.git
-[submodule "github-note-sync-client"]
-	path = github-note-sync-client
-	url = git@github.com:sseefried/github-note-sync-client.git
