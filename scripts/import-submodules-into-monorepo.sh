@@ -21,6 +21,7 @@ CLIENT_SUBMODULE_PATH="${CLIENT_SUBMODULE_PATH:-github-note-sync-client}"
 SERVER_SUBMODULE_PATH="${SERVER_SUBMODULE_PATH:-github-note-sync-server}"
 BACKUP_BRANCH_PREFIX="${BACKUP_BRANCH_PREFIX:-backup/pre-monorepo-import}"
 TOP_LEVEL_BRANCH="${TOP_LEVEL_BRANCH:-main}"
+IMPORT_TEMP_ROOT=""
 
 require_clean_worktree() {
   if [[ -n "$(git status --porcelain)" ]]; then
@@ -75,6 +76,12 @@ require_submodule_repo() {
   fi
 }
 
+cleanup() {
+  if [[ -n "${IMPORT_TEMP_ROOT}" && -d "${IMPORT_TEMP_ROOT}" ]]; then
+    rm -rf "${IMPORT_TEMP_ROOT}"
+  fi
+}
+
 clone_and_rewrite() {
   local source_path="$1"
   local target_clone="$2"
@@ -99,6 +106,26 @@ merge_import_branch() {
   local label="$2"
 
   git merge --no-ff --allow-unrelated-histories -m "Import ${label} history into monorepo" "${ref_name}"
+}
+
+detect_import_branch() {
+  local import_clone="$1"
+  local branch_name=""
+
+  branch_name="$(git -C "${import_clone}" symbolic-ref -q --short HEAD || true)"
+  if [[ -n "${branch_name}" ]]; then
+    printf '%s\n' "${branch_name}"
+    return
+  fi
+
+  branch_name="$(git -C "${import_clone}" for-each-ref --format='%(refname:short)' refs/heads | head -n 1)"
+  if [[ -n "${branch_name}" ]]; then
+    printf '%s\n' "${branch_name}"
+    return
+  fi
+
+  echo "Could not determine the import branch for ${import_clone}" >&2
+  exit 1
 }
 
 main() {
@@ -126,22 +153,21 @@ main() {
   local client_branch
   local server_branch
   local backup_branch
-  local temp_root
 
   current_branch="$(git branch --show-current)"
-  client_branch="$(git -C "${CLIENT_SUBMODULE_PATH}" branch --show-current)"
-  server_branch="$(git -C "${SERVER_SUBMODULE_PATH}" branch --show-current)"
   backup_branch="${BACKUP_BRANCH_PREFIX}-$(date +%Y%m%d-%H%M%S)"
 
-  temp_root="$(mktemp -d "${TMPDIR:-/tmp}/github-note-sync-monorepo-import.XXXXXX")"
-  trap 'rm -rf "${temp_root}"' EXIT
+  IMPORT_TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/github-note-sync-monorepo-import.XXXXXX")"
+  trap cleanup EXIT
 
   echo "Creating backup branch ${backup_branch}"
   git branch "${backup_branch}"
 
   echo "Cloning and rewriting submodule histories"
-  clone_and_rewrite "${CLIENT_SUBMODULE_PATH}" "${temp_root}/client-import" "${CLIENT_SUBDIR}"
-  clone_and_rewrite "${SERVER_SUBMODULE_PATH}" "${temp_root}/server-import" "${SERVER_SUBDIR}"
+  clone_and_rewrite "${CLIENT_SUBMODULE_PATH}" "${IMPORT_TEMP_ROOT}/client-import" "${CLIENT_SUBDIR}"
+  clone_and_rewrite "${SERVER_SUBMODULE_PATH}" "${IMPORT_TEMP_ROOT}/server-import" "${SERVER_SUBDIR}"
+  client_branch="$(detect_import_branch "${IMPORT_TEMP_ROOT}/client-import")"
+  server_branch="$(detect_import_branch "${IMPORT_TEMP_ROOT}/server-import")"
 
   echo "Removing submodule metadata from top-level history"
   git rm -f "${CLIENT_SUBMODULE_PATH}" "${SERVER_SUBMODULE_PATH}"
@@ -150,8 +176,8 @@ main() {
   git commit -m "Remove submodule metadata before monorepo import"
 
   echo "Fetching rewritten histories into namespaced refs"
-  fetch_import_refs "${temp_root}/client-import" "import/client" "import-client"
-  fetch_import_refs "${temp_root}/server-import" "import/server" "import-server"
+  fetch_import_refs "${IMPORT_TEMP_ROOT}/client-import" "import/client" "import-client"
+  fetch_import_refs "${IMPORT_TEMP_ROOT}/server-import" "import/server" "import-server"
 
   echo "Merging client history from ${client_branch}"
   merge_import_branch "refs/heads/import/client/${client_branch}" "client"
