@@ -1,0 +1,19 @@
+{
+  "name": "GitHub Note Sync",
+  "short_name": "Note Sync",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "background_color": "#1f2733",
+  "theme_color": "#1f2733",
+  "description": "Write and sync notes to GitHub repositories from a mobile-friendly editor.",
+  "icons": [
+    {
+      "src": "/icons/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
