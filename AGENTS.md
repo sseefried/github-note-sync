@@ -1,7 +1,4 @@
-- always update the README.md with installation and usage instructions
-- always update the Architecture section with the basic design and design philosophy of the app
-- this project is now split across two sibling repositories:
-- ../github-note-sync-server for the backend API and git-sync engine
-- ../github-note-sync-client for the frontend web app
-- keep repo-local instructions, READMEs, and architecture notes updated in the repository you change
+- always update the client/README.md with installation and usage instructions
+- always update the server/README.md with installation and usage instructions
+- always update the two Architecture sections in `docs/ARCHITECTURE.md` with the basic design and design philosophy of the app (for both the client and the server)
 - I specifically allow access to local networks while testing this app e.g. localhost
