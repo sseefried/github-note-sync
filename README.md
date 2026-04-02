@@ -1,19 +1,20 @@
-# GitHub Note Sync Workspace
+# GitHub Note Sync
 
-This top-level workspace ties together the two sibling repositories that make up the app:
+This repository is now a monorepo for the full app:
 
-- `github-note-sync-client` for the frontend web app
-- `github-note-sync-server` for the backend API and git-sync engine
+- `client/` for the frontend web app
+- `server/` for the backend API and git-sync engine
+- `docs/` for shared architecture, deployment notes, and teaching material
 
-It also holds shared design material and generated documentation artifacts, including the local-first sync state machine in [`docs/state-machine.dot`](./docs/state-machine.dot) and [`docs/state-machine.pdf`](./docs/state-machine.pdf).
+The shared documentation includes the local-first sync state machine in [`docs/state-machine.dot`](./docs/state-machine.dot) and [`docs/state-machine.pdf`](./docs/state-machine.pdf), the combined system design in [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md), and private tailnet DNS notes in [`docs/TAILSCALE.md`](./docs/TAILSCALE.md).
 
 ## Installation
 
-1. Install the dependencies required by each sibling repository:
+1. Install the dependencies required by the client and server:
 
    ```bash
-   (cd github-note-sync-client && npm install)
-   (cd github-note-sync-server && npm install)
+   (cd client && npm install)
+   (cd server && npm install)
    ```
 
 2. Install Graphviz if you want to regenerate the state-machine PDF locally:
@@ -32,19 +33,24 @@ It also holds shared design material and generated documentation artifacts, incl
 
 2. Open the generated diagram at `docs/state-machine.pdf`.
 
-3. Run the client and server from their own repositories as documented in:
-   - [`github-note-sync-client/README.md`](./github-note-sync-client/README.md)
-   - [`github-note-sync-server/README.md`](./github-note-sync-server/README.md)
+3. Read the shared architecture and deployment notes:
+   - [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)
+   - [`docs/TAILSCALE.md`](./docs/TAILSCALE.md)
+
+4. Run the client and server from their monorepo directories as documented in:
+   - [`client/README.md`](./client/README.md)
+   - [`server/README.md`](./server/README.md)
 
 ## Architecture
 
-This repository is a coordination layer rather than a deployable app on its own. The real runtime architecture lives in the sibling client and server repositories, while this top-level workspace stores shared design documents, deployment notes, and teaching artifacts that explain how those two repos work together.
+This repository contains the complete application. The runtime code lives under `client/` and `server/`, while `docs/` holds the shared architecture, sync-model, and deployment material that describes how those two halves work together.
 
-The most important shared artifact here is the local-first sync state machine. It documents the intended behavior for one file under one repo alias: frozen client base snapshots while dirty, idempotent patch replay through `POST /api/ops`, duplicate/converged retry handling, non-overlapping fast-forward replay, explicit overlapping-conflict materialization through `POST /api/conflicts/merge`, and the repo-alias safety rails that prevent stale cached state from leaking into a different upstream repo.
+The basic design is a local-first client paired with a server-owned Git sync engine. The client caches workspace state locally, freezes each dirty file's server base while edits are pending, and replays idempotent patch operations through `POST /api/ops`. The server owns authentication, SSH credentials, repo clones, and durable op receipts. When retries already converged, they are acknowledged as duplicates; when remote changes are non-overlapping, the client fast-forwards and retries; when edits truly overlap, the server materializes an explicit Git-based merge through `POST /api/conflicts/merge`.
 
 Design philosophy:
 
-- Keep client and server implementation details in their own repositories.
-- Keep cross-repo design artifacts in one shared, easy-to-find place.
+- Keep client and server code in one repository, but keep shared design material in `docs/`.
+- Prefer a local-first editing model with explicit, no-loss conflict handling.
+- Keep authentication, SSH keys, and Git authority on the server.
 - Make generated documentation reproducible from checked-in source.
 - Prefer simple local tooling over bespoke documentation pipelines.

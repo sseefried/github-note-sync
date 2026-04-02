@@ -49,7 +49,7 @@ The server repository is the backend API and git-sync engine. It owns users, pas
 11. Each sync attempt is logged to stdout with an ISO timestamp, the authenticated user id, and the `repoAlias`.
 12. Normal text edits should arrive through `POST /api/ops`. `GET /api/file` now returns both the file `revision` and the repo `headRevision` so the client can tie a fetched file to a concrete Git base commit. Patch requests may also include the intended final file text; if the server already has that exact text, it now acknowledges the retry as a duplicate instead of surfacing a false conflict. When a client hits a real revision conflict, the server includes the repo `headRevision` in the `409` payload so the client can decide whether to pull in a newer non-overlapping server change first. If the client later hits a true overlapping conflict and the user explicitly confirms the no-loss merge path, the client sends the last repo commit it knew for that edit plus its whole-file local content to `POST /api/conflicts/merge`. The server creates a temporary local branch from that base commit, commits the client’s whole-file content there, merges that temporary commit with current `HEAD`, commits the merge result, and deletes the temporary branch afterward. The server no longer supports any fallback that fabricates a full-file conflict block without a known base commit. If that base commit no longer exists on the server, the endpoint now rejects the request cleanly so the client can prompt the user and reload the latest server version instead.
 
-If you want private internal hostnames for a tailnet, use a separate DNS server on one of the Tailscale machines. The simplest option on Ubuntu Server is `dnsmasq` plus Tailscale split DNS; `TAILSCALE.md` contains a boot-safe example that can publish multiple names to the same Tailscale IP and explains how to avoid the common startup-order failure.
+If you want private internal hostnames for a tailnet, use a separate DNS server on one of the Tailscale machines. The simplest option on Ubuntu Server is `dnsmasq` plus Tailscale split DNS; [`docs/TAILSCALE.md`](../docs/TAILSCALE.md) contains a boot-safe example that can publish multiple names to the same Tailscale IP and explains how to avoid the common startup-order failure.
 
 The server now rejects requests that do not arrive with `X-Forwarded-Proto: https`. In practice that means you are expected to run it behind a reverse proxy such as Caddy or nginx in both local HTTPS testing and production. For browser clients on another origin, set `allowedOrigins` in `config.json`.
 
@@ -192,5 +192,4 @@ Repo management and editing, all scoped to the authenticated user:
 - `POST /api/sync`: run an immediate sync for a repo alias
 
 The server never returns private keys.
-
 

@@ -1,8 +1,10 @@
-## Tailscale internal DNS configuration
+## Tailscale Internal DNS
 
-Use a private DNS zone you control, or `home.arpa` for a local-only namespace. Avoid inventing a public-looking TLD for internal use.
+This document describes one practical way to give the monorepo deployment stable private hostnames on a tailnet. It fits the current deployment model described in [ARCHITECTURE.md](./ARCHITECTURE.md): TLS still terminates in a reverse proxy, while Tailscale only supplies private network reachability and DNS.
 
-This setup runs a small DNS server on one Ubuntu Server machine in the tailnet, then tells Tailscale to send queries for the private zone to that machine. It also avoids the common boot-time failure where `dnsmasq` starts before `tailscale0` exists.
+Use a private DNS zone you control. In the examples below, `internal.domain.com` is just a placeholder for a private zone you administer. Avoid inventing a public-looking TLD that you do not control.
+
+This setup runs a small DNS server on one Ubuntu machine in the tailnet, then tells Tailscale to send queries for the private zone to that machine. It also avoids the common boot-time failure where `dnsmasq` starts before `tailscale0` exists.
 
 1. Install `dnsmasq`:
 
@@ -35,14 +37,14 @@ This setup runs a small DNS server on one Ubuntu Server machine in the tailnet, 
    server=1.0.0.1
 
    # Declare our private zone as local.
-   local=/internal.home.arpa/
+   local=/internal.domain.com/
 
    # Static records. These can point to the same Tailscale IP.
-   address=/notes-api.internal.home.arpa/100.102.197.111
-   address=/notes.internal.home.arpa/100.102.197.111
+   address=/notes-api.internal.domain.com/100.102.197.111
+   address=/notes.internal.domain.com/100.102.197.111
    ```
 
-   Replace `100.102.197.111` with the Tailscale IP from step 2, and replace `internal.home.arpa` with your own private zone if you prefer to use a real domain you control.
+   Replace `100.102.197.111` with the Tailscale IP from step 2, and replace `internal.domain.com` with your own private zone if needed.
 
 4. If `dnsmasq` previously failed to start after a reboot, add a systemd override so it waits for Tailscale:
 
@@ -62,7 +64,7 @@ This setup runs a small DNS server on one Ubuntu Server machine in the tailnet, 
    sudo systemctl enable dnsmasq
    ```
 
-6. In the Tailscale admin console, go to `DNS` and add the Ubuntu machine's Tailscale IP as a restricted nameserver for `internal.home.arpa` or your chosen private domain.
+6. In the Tailscale admin console, go to `DNS` and add the Ubuntu machine's Tailscale IP as a restricted nameserver for `internal.domain.com` or your chosen private domain.
 
 7. On tailnet clients, make sure they accept Tailscale DNS settings:
 
@@ -73,16 +75,16 @@ This setup runs a small DNS server on one Ubuntu Server machine in the tailnet, 
 8. Test name resolution from another Tailscale-connected machine:
 
    ```bash
-   getent hosts notes-api.internal.home.arpa
-   getent hosts notes.internal.home.arpa
+   getent hosts notes-api.internal.domain.com
+   getent hosts notes.internal.domain.com
    ```
 
    Or:
 
    ```bash
-   resolvectl query notes-api.internal.home.arpa
+   resolvectl query notes-api.internal.domain.com
    ```
 
-## Configuring in Tailscale Admin Console
+## Tailscale Admin Console
 
 ![Tailscale DNS settings screenshot](assets/TAILSCALE-image.png)
