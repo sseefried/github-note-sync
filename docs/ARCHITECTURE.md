@@ -1,5 +1,19 @@
 # Architecture
 
+## Top-level Architecture
+
+This repository contains the complete application. The runtime code lives under `client/` and `server/`, while `docs/` holds the shared architecture, sync-model, and deployment material that describes how those two halves work together.
+
+The basic design is a local-first client paired with a server-owned Git sync engine. The client caches workspace state locally, freezes each dirty file's server base while edits are pending, and replays idempotent patch operations through `POST /api/ops`. The server owns authentication, SSH credentials, repo clones, and durable op receipts. When retries already converged, they are acknowledged as duplicates; when remote changes are non-overlapping, the client fast-forwards and retries; when edits truly overlap, the server materializes an explicit Git-based merge through `POST /api/conflicts/merge`.
+
+Design philosophy:
+
+- Keep client and server code in one repository, but keep shared design material in `docs/`.
+- Prefer a local-first editing model with explicit, no-loss conflict handling.
+- Keep authentication, SSH keys, and Git authority on the server.
+- Make generated documentation reproducible from checked-in source.
+- Prefer simple local tooling over bespoke documentation pipelines.
+
 ## Client Architecture
 
 The client keeps its app state in a single React reducer (`src/state-machine/app-machine.js`) with a top-level session slice, a top-level connectivity field, and a nested workspace slice that owns file, sync, replica, and interaction state. `workspace.interaction` only exists while the app is actually resolving a prompt, so the old sentinel `resolution.kind === 'none'` state is gone. `deriveWorkspacePhase()` and `deriveFilePhase()` compute phase values from the current inputs, while `buildResolutionState()` now constructs the nested interaction branch, enforces the prompt precedence order `reload_from_server` > `fast_forward` > `merge_with_remote`, and preserves the busy flag when the prompt identity stays the same. The Graphviz source and rendered PDF for the state machine now live at [`docs/state-machine.dot`](/Users/sseefried/code/github-note-sync/docs/state-machine.dot) and [`docs/state-machine.pdf`](/Users/sseefried/code/github-note-sync/docs/state-machine.pdf).

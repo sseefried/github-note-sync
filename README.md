@@ -8,6 +8,14 @@ This repository is now a monorepo for the full app:
 
 The shared documentation includes the local-first sync state machine in [`docs/state-machine.dot`](./docs/state-machine.dot) and [`docs/state-machine.pdf`](./docs/state-machine.pdf), the combined system design in [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md), and private tailnet DNS notes in [`docs/TAILSCALE.md`](./docs/TAILSCALE.md).
 
+## Docs
+
+- [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md): top-level system design plus the detailed client and server architecture.
+- [`docs/TAILSCALE.md`](./docs/TAILSCALE.md): private tailnet DNS setup notes for the deployment model used here.
+- [`docs/local-first-pwa-design.md`](./docs/local-first-pwa-design.md): broader design notes for the local-first PWA approach.
+- [`docs/state-machine.dot`](./docs/state-machine.dot): Graphviz source for the file-sync state machine.
+- [`docs/gen-state-machine-pdf.sh`](./docs/gen-state-machine-pdf.sh): script that renders the state-machine PDF from the Graphviz source.
+
 ## Installation
 
 1. Install the dependencies required by the client and server:
@@ -43,14 +51,4 @@ The shared documentation includes the local-first sync state machine in [`docs/s
 
 ## Architecture
 
-This repository contains the complete application. The runtime code lives under `client/` and `server/`, while `docs/` holds the shared architecture, sync-model, and deployment material that describes how those two halves work together.
-
-The basic design is a local-first client paired with a server-owned Git sync engine. The client caches workspace state locally, freezes each dirty file's server base while edits are pending, and replays idempotent patch operations through `POST /api/ops`. The server owns authentication, SSH credentials, repo clones, and durable op receipts. When retries already converged, they are acknowledged as duplicates; when remote changes are non-overlapping, the client fast-forwards and retries; when edits truly overlap, the server materializes an explicit Git-based merge through `POST /api/conflicts/merge`.
-
-Design philosophy:
-
-- Keep client and server code in one repository, but keep shared design material in `docs/`.
-- Prefer a local-first editing model with explicit, no-loss conflict handling.
-- Keep authentication, SSH keys, and Git authority on the server.
-- Make generated documentation reproducible from checked-in source.
-- Prefer simple local tooling over bespoke documentation pipelines.
+The canonical architecture document is [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md). It contains the top-level system design plus the detailed client and server architecture sections.
