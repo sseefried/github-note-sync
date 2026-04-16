@@ -306,7 +306,7 @@ function TreeNode({
   onSelect,
   selectedPath,
 }) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(depth === 0);
 
   if (node.type === 'file') {
     return (
