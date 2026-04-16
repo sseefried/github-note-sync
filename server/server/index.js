@@ -412,6 +412,33 @@ app.get('/api/file', async (request, response) => {
   }
 });
 
+app.post('/api/client-log', (request, response) => {
+  if (process.env.SYNC_LOG !== '1') {
+    response.status(204).end();
+    return;
+  }
+
+  const { event, fields } = request.body ?? {};
+
+  if (typeof event !== 'string' || event.trim() === '') {
+    response.status(400).json({ error: 'event is required' });
+    return;
+  }
+
+  const safeFields =
+    fields && typeof fields === 'object' && !Array.isArray(fields) ? fields : {};
+  const parts = Object.entries(safeFields).map(([key, value]) => {
+    if (value === null || value === undefined) {
+      return `${key}=-`;
+    }
+    return `${key}=${value}`;
+  });
+
+  // eslint-disable-next-line no-console
+  console.log(`[client] [sync] ${event} ${parts.join(' ')}`);
+  response.status(204).end();
+});
+
 app.post('/api/ops', async (request, response) => {
   const manager = requireService(repoManager, response);
   const user = await requireAuthenticatedUser(request, response);

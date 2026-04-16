@@ -5,6 +5,42 @@ const STORE_FILES = 'files';
 const STORE_WRITES = 'writes';
 const STORE_NAMES = [STORE_REPOS, STORE_FILES, STORE_WRITES];
 
+const SYNC_LOG_ENABLED =
+  typeof import.meta !== 'undefined' &&
+  import.meta?.env?.VITE_SYNC_LOG === '1';
+
+function syncLog(event, fields = {}) {
+  if (!SYNC_LOG_ENABLED || typeof fetch !== 'function') {
+    return;
+  }
+
+  try {
+    fetch('/api/client-log', {
+      body: JSON.stringify({ event, fields }),
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      keepalive: true,
+      method: 'POST',
+    }).catch(() => {});
+  } catch {}
+}
+
+function shortId(value) {
+  if (typeof value !== 'string' || value.length === 0) {
+    return '-';
+  }
+  return value.slice(0, 8);
+}
+
+function shortRev(value) {
+  if (typeof value !== 'string' || value.length === 0) {
+    return '-';
+  }
+  return value.slice(0, 10);
+}
+
+export { syncLog, shortId, shortRev };
+
 function normalizeRepoAlias(repoAlias) {
   return typeof repoAlias === 'string' ? repoAlias.trim() : '';
 }
@@ -310,6 +346,18 @@ export function createWorkspaceStoreWithAdapter(adapter) {
       updatedAt,
     };
 
+    syncLog('saveServerFileSnapshot', {
+      path: normalizedFilePath,
+      advanceBase,
+      preserveLocalContent,
+      hadLocalChanges: Boolean(hasLocalChanges),
+      shouldAdvanceBase,
+      prevRev: shortRev(currentSnapshot?.revision),
+      nextRev: shortRev(nextSnapshot.revision),
+      prevServerLen: currentSnapshot?.serverContent?.length ?? 0,
+      nextServerLen: nextSnapshot.serverContent?.length ?? 0,
+      contentLen: nextSnapshot.content?.length ?? 0,
+    });
     await adapter.put(STORE_FILES, nextSnapshot);
     return nextSnapshot;
   }
@@ -341,6 +389,13 @@ export function createWorkspaceStoreWithAdapter(adapter) {
       updatedAt,
     };
 
+    syncLog('saveLocalFileContent', {
+      path: normalizedFilePath,
+      contentLen: content.length,
+      revision: shortRev(nextSnapshot.revision),
+      serverLen: nextSnapshot.serverContent?.length ?? 0,
+      dirty: nextSnapshot.content !== nextSnapshot.serverContent,
+    });
     await adapter.put(STORE_FILES, nextSnapshot);
     return nextSnapshot;
   }
@@ -392,6 +447,14 @@ export function createWorkspaceStoreWithAdapter(adapter) {
       updatedAt,
     };
 
+    syncLog('upsertPendingOperation', {
+      path: normalizedFilePath,
+      prevOpId: shortId(currentOperation?.opId),
+      nextOpId: shortId(opId),
+      baseRev: shortRev(nextOperation.baseRevision),
+      status,
+      targetLen: nextOperation.targetContent.length,
+    });
     await adapter.put(STORE_WRITES, nextOperation);
     return nextOperation;
   }
@@ -473,6 +536,12 @@ export function createWorkspaceStoreWithAdapter(adapter) {
     const currentSnapshot = await getFileSnapshot(repoAlias, filePath);
 
     if (!currentOperation || currentOperation.opId !== opId) {
+      syncLog('acknowledgeOperation.stale', {
+        path: normalizeFilePath(filePath),
+        ackOpId: shortId(opId),
+        currentOpId: shortId(currentOperation?.opId),
+        revision: shortRev(revision),
+      });
       await saveServerFileSnapshot({
         advanceBase: true,
         content,
@@ -488,6 +557,12 @@ export function createWorkspaceStoreWithAdapter(adapter) {
       typeof currentSnapshot?.content === 'string' &&
       currentSnapshot.content !== currentOperation.targetContent;
 
+    syncLog('acknowledgeOperation.match', {
+      path: currentOperation.path,
+      opId: shortId(opId),
+      revision: shortRev(revision),
+      preserveLocalContent,
+    });
     await Promise.all([
       clearPendingOperation(repoAlias, filePath),
       saveServerFileSnapshot({

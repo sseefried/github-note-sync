@@ -7,6 +7,7 @@ SYSTEMD_DIR="${HOME}/.config/systemd/user"
 UNIT_PATH="${SYSTEMD_DIR}/${SERVICE_NAME}.service"
 LISTEN_PORT="4173"
 SERVER_URL=""
+SYNC_LOG="0"
 
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -18,6 +19,9 @@ Options:
   --install-dir PATH         Installation directory for the deployed app
   --listen-port PORT         Port used by vite preview
   --server-url URL           Public base URL used by the browser for API requests
+  --sync-log                 Build the bundle with VITE_SYNC_LOG=1 so the
+                             client ships self-conflict debug logs to the
+                             server's POST /api/client-log endpoint
   --help                     Show this help
 EOF
 }
@@ -96,6 +100,10 @@ while (($# > 0)); do
       SERVER_URL="$2"
       shift 2
       ;;
+    --sync-log)
+      SYNC_LOG="1"
+      shift 1
+      ;;
     --help)
       usage
       exit 0
@@ -121,7 +129,11 @@ copy_repo
 (
   cd "${INSTALL_DIR}"
   npm ci
-  npm run build -- --server-url="${SERVER_URL}"
+  if [[ "${SYNC_LOG}" == "1" ]]; then
+    VITE_SYNC_LOG=1 npm run build -- --server-url="${SERVER_URL}"
+  else
+    npm run build -- --server-url="${SERVER_URL}"
+  fi
 )
 
 write_unit

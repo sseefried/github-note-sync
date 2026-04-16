@@ -215,6 +215,49 @@ test('commitConflictMarkers keeps the clone on main when the merge result alread
   assert.doesNotMatch(runGit(['branch', '--list'], fixture.service.config.repoDir), /github-note-sync-temp-/);
 });
 
+test('syncNow reset-to-remote discards unstaged local edits and untracked files', async (t) => {
+  const fixture = await createRepoFixture();
+  t.after(async () => {
+    await fixture.cleanup();
+  });
+
+  const { remoteDir, service } = fixture;
+
+  // Advance the remote so syncNow enters the remoteChanged → resetToRemote
+  // branch when we call it below.
+  const authorDir = path.join(path.dirname(fixture.service.config.repoDir), 'author');
+  await fs.writeFile(path.join(authorDir, 'notes', 'today.md'), 'remote wins\n', 'utf8');
+  runGit(['add', '-A'], authorDir);
+  runGit(['commit', '-m', 'Advance remote'], authorDir);
+  runGit(['push', 'origin', 'main'], authorDir);
+
+  // Leave the server clone with an unstaged edit to a tracked file and an
+  // untracked new file, matching the real-world state when the user has
+  // just edited and created files through the app but no commit has landed
+  // yet.
+  await service.writeFile('notes/today.md', 'local edit waiting to sync\n');
+  await service.writeFile('notes/new-file.md', 'freshly created\n');
+
+  const result = await service.syncNow('test');
+
+  assert.equal(result.kind, 'overwritten');
+  assert.equal(
+    await service.readFile('notes/today.md'),
+    'remote wins\n',
+    'reset must replace unstaged local edits with the remote content',
+  );
+  await assert.rejects(
+    () => service.readFile('notes/new-file.md'),
+    /ENOENT/,
+    'reset must remove untracked files the user created locally',
+  );
+  assert.equal(
+    runGit(['status', '--porcelain'], fixture.service.config.repoDir),
+    '',
+    'working tree must be clean after reset-to-remote',
+  );
+});
+
 test('commitConflictMarkers rejects requests without a base commit', async (t) => {
   const fixture = await createRepoFixture();
   t.after(async () => {

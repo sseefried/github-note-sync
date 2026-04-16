@@ -7,6 +7,36 @@ import { applyPatchOperations, hashContent } from './patch-ops.js';
 const execFileAsync = promisify(execFile);
 const MAX_BUFFER = 10 * 1024 * 1024;
 const MAX_DEDUPE_ENTRIES = 10_000;
+const OPS_LOG_ENABLED = process.env.SYNC_LOG === '1';
+
+function opsLog(event, fields = {}) {
+  if (!OPS_LOG_ENABLED) {
+    return;
+  }
+
+  const parts = Object.entries(fields).map(([key, value]) => {
+    if (value === null || value === undefined) {
+      return `${key}=-`;
+    }
+    return `${key}=${value}`;
+  });
+  // eslint-disable-next-line no-console
+  console.log(`[ops] ${event} ${parts.join(' ')}`);
+}
+
+function shortId(value) {
+  if (typeof value !== 'string' || value.length === 0) {
+    return '-';
+  }
+  return value.slice(0, 8);
+}
+
+function shortRev(value) {
+  if (typeof value !== 'string' || value.length === 0) {
+    return '-';
+  }
+  return value.slice(0, 10);
+}
 
 function createConflictError(payload) {
   const error = new Error(payload.error ?? 'conflict');
@@ -158,6 +188,15 @@ export class GitRepoService {
     const outcomes = [];
 
     for (const op of normalizedOps) {
+      opsLog('recv', {
+        opId: shortId(op?.opId),
+        path: typeof op?.path === 'string' ? op.path : '-',
+        baseRev: shortRev(op?.baseRevision),
+        targetLen: typeof op?.targetContent === 'string' ? op.targetContent.length : null,
+        patchOps: Array.isArray(op?.payload?.ops) ? op.payload.ops.length : null,
+        alreadyApplied: this.appliedOps.has(op?.opId),
+      });
+
       if (this.appliedOps.has(op?.opId)) {
         const appliedEntry = this.appliedOps.get(op.opId);
 
@@ -165,6 +204,11 @@ export class GitRepoService {
           const { revision: currentRevision } = await this.readFileState(appliedEntry.path);
 
           if (currentRevision === appliedEntry.revision) {
+            opsLog('dedup', {
+              opId: shortId(op.opId),
+              path: appliedEntry.path,
+              revision: shortRev(appliedEntry.revision),
+            });
             ackedOpIds.push(op.opId);
             outcomes.push({
               opId: op.opId,
@@ -195,25 +239,23 @@ export class GitRepoService {
 
       const { content: currentContent, revision: currentRevision } = await this.readFileState(op.path);
 
-      if (currentRevision !== op.baseRevision) {
-        if (typeof op.targetContent === 'string' && currentContent === op.targetContent) {
-          await this.#recordAppliedOp(op.opId, {
-            path: op.path,
-            recordedAt: new Date().toISOString(),
-            revision: currentRevision,
-          });
+      // Accept iff the base matches (CAS), or the target content already equals
+      // current (converged retry). Otherwise the op is a genuine conflict.
+      const baseMatches = currentRevision === op.baseRevision;
+      const targetConverged =
+        typeof op.targetContent === 'string' && currentContent === op.targetContent;
 
-          ackedOpIds.push(op.opId);
-          outcomes.push({
-            opId: op.opId,
-            path: op.path,
-            revision: currentRevision,
-            status: 'duplicate',
-          });
-          continue;
-        }
-
+      if (!baseMatches && !targetConverged) {
         const headRevision = await this.#git(['rev-parse', 'HEAD']);
+        opsLog('CONFLICT', {
+          opId: shortId(op.opId),
+          path: op.path,
+          expectedBaseRev: shortRev(op.baseRevision),
+          currentRev: shortRev(currentRevision),
+          currentLen: currentContent.length,
+          targetLen: typeof op.targetContent === 'string' ? op.targetContent.length : null,
+          headRev: shortRev(headRevision),
+        });
         throw createConflictError({
           currentContent,
           currentRevision,
@@ -228,22 +270,33 @@ export class GitRepoService {
         });
       }
 
-      const nextContent = applyPatchOperations(currentContent, op.payload.ops);
-      await this.writeFile(op.path, nextContent);
+      const nextContent = baseMatches
+        ? applyPatchOperations(currentContent, op.payload.ops)
+        : currentContent;
+      const nextRevision = baseMatches ? hashContent(nextContent) : currentRevision;
+      const status = baseMatches ? 'applied' : 'duplicate';
 
-      const nextRevision = hashContent(nextContent);
+      if (baseMatches) {
+        await this.writeFile(op.path, nextContent);
+      }
+
       await this.#recordAppliedOp(op.opId, {
         path: op.path,
         recordedAt: new Date().toISOString(),
         revision: nextRevision,
       });
 
+      opsLog(status === 'applied' ? 'applied' : 'converged', {
+        opId: shortId(op.opId),
+        path: op.path,
+        revision: shortRev(nextRevision),
+      });
       ackedOpIds.push(op.opId);
       outcomes.push({
         opId: op.opId,
         path: op.path,
         revision: nextRevision,
-        status: 'applied',
+        status,
       });
     }
 
@@ -576,7 +629,11 @@ export class GitRepoService {
   }
 
   async #resetToRemote(message) {
-    await this.#git(['checkout', '-B', this.branch, `origin/${this.branch}`]);
+    // --force is required so that unstaged edits to tracked files (e.g. a
+    // file the user just wrote via writeFile but hasn't been committed yet)
+    // do not abort the checkout. The subsequent reset --hard + clean -fd
+    // would have thrown those edits away anyway; this restores that intent.
+    await this.#git(['checkout', '--force', '-B', this.branch, `origin/${this.branch}`]);
     await this.#git(['reset', '--hard', `origin/${this.branch}`]);
     await this.#git(['clean', '-fd']);
 

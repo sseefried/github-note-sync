@@ -10,6 +10,7 @@ SYNC_INTERVAL_MS="30000"
 GIT_USER_NAME="GitHub Note Sync"
 GIT_USER_EMAIL="note-sync@example.com"
 ALLOWED_ORIGINS=()
+SYNC_LOG="0"
 
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -24,6 +25,7 @@ Options:
   --git-user-name NAME       Git commit author name used by the server
   --git-user-email EMAIL     Git commit author email used by the server
   --allowed-origin URL       Browser origin allowed by CORS (repeatable)
+  --sync-log                 Enable self-conflict debug logging (SYNC_LOG=1)
   --help                     Show this help
 EOF
 }
@@ -92,6 +94,11 @@ EOF
 write_unit() {
   mkdir -p "${SYSTEMD_DIR}"
 
+  local sync_log_line=""
+  if [[ "${SYNC_LOG}" == "1" ]]; then
+    sync_log_line=$'\nEnvironment=SYNC_LOG=1'
+  fi
+
   cat > "${UNIT_PATH}" <<EOF
 [Unit]
 Description=GitHub Note Sync Server
@@ -104,7 +111,7 @@ WorkingDirectory=${INSTALL_DIR}
 ExecStart=/usr/bin/env node server/index.js
 Restart=always
 RestartSec=3
-Environment=NODE_ENV=production
+Environment=NODE_ENV=production${sync_log_line}
 
 [Install]
 WantedBy=default.target
@@ -136,6 +143,10 @@ while (($# > 0)); do
     --allowed-origin)
       ALLOWED_ORIGINS+=("$2")
       shift 2
+      ;;
+    --sync-log)
+      SYNC_LOG="1"
+      shift 1
       ;;
     --help)
       usage

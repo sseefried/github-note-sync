@@ -13,7 +13,7 @@ import {
   setCachedSessionState,
   setLastOpenedRepoAlias,
 } from './local-first/local-settings.js';
-import { createWorkspaceStore } from './local-first/workspace-store.js';
+import { createWorkspaceStore, shortId, shortRev, syncLog } from './local-first/workspace-store.js';
 import {
   buildRepoPath,
   parseRepoRoute,
@@ -603,6 +603,7 @@ export default function App() {
   const backgroundSyncInFlightRef = useRef(false);
   const syncingOperationsRef = useRef(false);
   const pendingWriteGenerationRef = useRef(new Map());
+  const editorUpdateChainRef = useRef(new Map());
   const workspaceStoreRef = useRef(null);
   const resizeCleanupRef = useRef(null);
 
@@ -1539,6 +1540,14 @@ export default function App() {
           (currentFileSnapshot.content !== currentOperation.targetContent ||
             currentFileSnapshot.revision !== currentOperation.baseRevision)
         ) {
+          syncLog('send-precheck-skip', {
+            path: pendingOperation.path,
+            opId: shortId(currentOperation.opId),
+            opBaseRev: shortRev(currentOperation.baseRevision),
+            snapshotRev: shortRev(currentFileSnapshot.revision),
+            contentMatchesOp:
+              currentFileSnapshot.content === currentOperation.targetContent,
+          });
           bumpPendingWriteGeneration(pendingOperation.repoAlias, pendingOperation.path);
           await preparePendingOperation(pendingOperation.repoAlias, pendingOperation.path);
           continue;
@@ -1559,6 +1568,13 @@ export default function App() {
         let data = null;
 
         if (activeOperation.kind === 'patch') {
+          syncLog('send', {
+            path: activeOperation.path,
+            opId: shortId(activeOperation.opId),
+            baseRev: shortRev(activeOperation.baseRevision),
+            targetLen: activeOperation.targetContent.length,
+            patchOps: activeOperation.payload?.ops?.length ?? 0,
+          });
           data = await fetchJson('/api/ops', {
             body: JSON.stringify({
               ops: [
@@ -1575,6 +1591,15 @@ export default function App() {
             }),
             keepalive,
             method: 'POST',
+          });
+
+          const outcomeLog =
+            data.outcomes?.find((entry) => entry.opId === activeOperation.opId) ?? data.outcomes?.[0];
+          syncLog('send-ack', {
+            path: activeOperation.path,
+            opId: shortId(activeOperation.opId),
+            status: outcomeLog?.status ?? '-',
+            serverRev: shortRev(outcomeLog?.revision),
           });
 
           const outcome =
@@ -1644,6 +1669,17 @@ export default function App() {
         error.status === 409 &&
         activeOperation
       ) {
+        syncLog('conflict-received', {
+          path: activeOperation.path,
+          opId: shortId(activeOperation.opId),
+          opBaseRev: shortRev(activeOperation.baseRevision),
+          serverRev: shortRev(error.payload?.currentRevision),
+          targetLen: activeOperation.targetContent?.length ?? 0,
+          serverLen:
+            typeof error.payload?.currentContent === 'string'
+              ? error.payload.currentContent.length
+              : null,
+        });
         setConnectivityStatus('online');
 
         const currentContent =
@@ -2996,32 +3032,51 @@ export default function App() {
       return;
     }
 
+    syncLog('editor-change', {
+      path: activePath,
+      contentLen: nextContent.length,
+    });
+
     const updatedAt = new Date().toISOString();
     const prepareGeneration = bumpPendingWriteGeneration(activeRepoAliasRef.current, activePath);
-    workspaceStoreRef.current
-      ?.saveLocalFileContent({
-        content: nextContent,
-        filePath: activePath,
-        repoAlias: activeRepoAliasRef.current,
-        updatedAt,
-      })
+    const chainKey = createPendingWriteGenerationKey(activeRepoAliasRef.current, activePath);
+    const previousChain = editorUpdateChainRef.current.get(chainKey) ?? Promise.resolve();
+    const repoAliasForChain = activeRepoAliasRef.current;
+    const pathForChain = activePath;
+    const nextChain = previousChain
+      .catch(() => {})
       .then(async () => {
+        const store = workspaceStoreRef.current;
+        if (!store) {
+          return;
+        }
+        await store.saveLocalFileContent({
+          content: nextContent,
+          filePath: pathForChain,
+          repoAlias: repoAliasForChain,
+          updatedAt,
+        });
         const operation = await preparePendingOperation(
-          activeRepoAliasRef.current,
-          activePath,
+          repoAliasForChain,
+          pathForChain,
           0,
           prepareGeneration,
         );
-
         if (operation?.status === 'missing_revision') {
           setSaveError(
-            `Refresh ${activePath} from the server before syncing edits from this old cached copy.`,
+            `Refresh ${pathForChain} from the server before syncing edits from this old cached copy.`,
           );
         }
       })
       .catch((error) => {
         setSaveError(error.message);
+      })
+      .finally(() => {
+        if (editorUpdateChainRef.current.get(chainKey) === nextChain) {
+          editorUpdateChainRef.current.delete(chainKey);
+        }
       });
+    editorUpdateChainRef.current.set(chainKey, nextChain);
     workspaceStoreRef.current
       ?.saveRepoSnapshot({
         repoAlias: activeRepoAliasRef.current,
